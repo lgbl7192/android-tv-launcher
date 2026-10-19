@@ -84,7 +84,7 @@ class MainActivity : ComponentActivity() {
         return if (packageManager.resolveActivity(xiaomi, 0) != null) xiaomi else Intent(Settings.ACTION_DISPLAY_SETTINGS)
     }
 
-    // Live TV apps (HDMI inputs) and Stremio (title links) can ignore the link if they're already running,
+    // Live TV apps (HDMI inputs) and Nuvio/Stremio (title links) can ignore the link if they're already running,
     // so close the target's background process first. It's always in the background while we're Home.
     private fun launchFresh(intent: Intent) {
         packageManager.resolveActivity(intent, 0)?.activityInfo?.packageName?.let {
