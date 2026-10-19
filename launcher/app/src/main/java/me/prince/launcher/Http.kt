@@ -1,5 +1,7 @@
 package me.prince.launcher
 
+import org.json.JSONArray
+import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -17,3 +19,9 @@ fun httpBytes(url: String, headers: Map<String, String> = emptyMap()): ByteArray
         connection.disconnect()
     }
 }
+
+fun JSONArray?.objects(): List<JSONObject> =
+    if (this == null) emptyList() else (0 until length()).mapNotNull { optJSONObject(it) }
+
+fun JSONArray?.strings(): List<String> =
+    if (this == null) emptyList() else (0 until length()).mapNotNull { optString(it).takeIf(String::isNotBlank) }

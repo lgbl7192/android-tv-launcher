@@ -63,6 +63,7 @@ class MainActivity : ComponentActivity() {
                 onSound = sound?.let { { launch(it) } },
                 // Stremio title links only work on a cold start; plain app launches don't need that
                 onOpenTrending = { if (it.data != null) launchFresh(it) else launch(it) },
+                onOpenGame = { launch(it) },
             )
         }
     }

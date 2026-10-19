@@ -178,5 +178,3 @@ private fun isLightEnough(logo: Bitmap): Boolean {
     }
     return count > 0 && total / count > 0.45f
 }
-
-private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }

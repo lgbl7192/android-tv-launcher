@@ -15,6 +15,7 @@ Written up end to end here: [How I Debloated My Android TV and Built My Own Laun
 
 - **Apple TV-style look.** Frosted glass buttons, rows that run off the screen edge, focus shown by a lift and a glow in the app's colour (no thick borders), and the [Inter](https://rsms.me/inter/) font in text and display sizes.
 - **Trending this week** (optional). Popular movies and shows from [TMDB](https://www.themoviedb.org/) with a full-width backdrop, logo, rating and summary. The button opens **the app that streams the title in your country** (Netflix, Prime Video, Disney+, Hotstar, Apple TV+, Hulu, Paramount+) if you have it installed, otherwise the title's page in Stremio if you have that.
+- **Live sports** (optional). A row of live, upcoming and recent games from ESPN's free scoreboard (no key), your teams first. Selecting a game opens the app that carries it (ESPN, Fox One, Peacock, Paramount+, HBO Max, Prime Video, Apple TV…). It only refreshes while the home screen is showing: every minute during live games, otherwise every 15 minutes.
 - **Your apps, your order.** A favourites row and an all-apps row. Long-press any tile to **move it, add it to or remove it from favourites**, or open App info.
 - **Recent** row of your most-used apps (favourites left out, since they're one row up).
 - **HDMI inputs as tiles** on TVs, named after the connected device where the TV reports it (e.g. "Apple TV · HDMI 1"). Hidden on streaming boxes.
@@ -120,6 +121,8 @@ Edit `local.properties`:
 | `tmdb.key` | Your TMDB key. Empty = no trending section |
 | `tmdb.region` | Two-letter country code (`IN`, `US`, `GB`…) used to pick the streaming app for the button. Empty = the TV's country setting. Set it if your TV's locale doesn't match where you live |
 | `tmdb.feed` | `all`, `movie` or `tv` |
+| `sports.leagues` | Leagues for the Sports row: `nfl`, `nba`, `wnba`, `mlb`, `nhl`, `cfb`, `cbb`, `mls`, `epl`. Empty (with no teams) = no Sports row. College leagues only show ranked teams' games, plus yours |
+| `sports.teams` | Your teams, shown first, as `league:ESPN abbreviation`, e.g. `nfl:TEN,epl:EVE`. If a team doesn't play today, its next game in the coming week is shown instead |
 
 `local.properties` is gitignored, so your key never ends up in a commit. Then build:
 

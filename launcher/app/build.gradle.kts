@@ -1,6 +1,6 @@
 import java.util.Properties
 
-// Trending settings live in local.properties (gitignored, see local.properties.example): tmdb.key, tmdb.region, tmdb.feed
+// Trending and sports settings live in local.properties (gitignored, see local.properties.example)
 val localProperties = Properties().apply {
     rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
 }
@@ -24,6 +24,8 @@ android {
         buildConfigField("String", "TMDB_KEY", "\"${localProperties.getProperty("tmdb.key", "")}\"")
         buildConfigField("String", "TMDB_REGION", "\"${localProperties.getProperty("tmdb.region", "")}\"")
         buildConfigField("String", "TMDB_FEED", "\"${localProperties.getProperty("tmdb.feed", "all")}\"")
+        buildConfigField("String", "SPORTS_LEAGUES", "\"${localProperties.getProperty("sports.leagues", "")}\"")
+        buildConfigField("String", "SPORTS_TEAMS", "\"${localProperties.getProperty("sports.teams", "")}\"")
     }
 
     buildTypes {
