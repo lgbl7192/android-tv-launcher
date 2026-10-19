@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.foundation.border
@@ -40,6 +41,7 @@ val LocalGlassSource = compositionLocalOf<GlassSource?> { null }
 private const val BLUR_WIDTH = 160
 private const val BLUR_RADIUS = 4
 private const val BLUR_PASSES = 3
+private const val STRIP_BLUR_RADIUS = 2
 
 // Frosted surface: blurred backdrop lined up with what's behind it, a milky lift, a specular top
 // highlight and a light rim that's brighter at the top-left, like light catching the edge.
@@ -111,6 +113,21 @@ fun captureBlurredWindow(window: Window, onReady: (ImageBitmap?) -> Unit) {
     }, Handler(Looper.getMainLooper()))
 }
 
+// Blurs an already-small capture (the strip under the pinned bar) in place, no rescale
+fun blurredStrip(image: ImageBitmap): ImageBitmap {
+    // Layer readbacks are HARDWARE bitmaps, which can't hand out pixels
+    val bitmap = image.asAndroidBitmap().copy(Bitmap.Config.ARGB_8888, false)
+    val w = bitmap.width
+    val h = bitmap.height
+    val px = IntArray(w * h)
+    bitmap.getPixels(px, 0, w, 0, 0, w, h)
+    repeat(BLUR_PASSES) {
+        boxBlur(px, w, h, horizontal = true, radius = STRIP_BLUR_RADIUS)
+        boxBlur(px, w, h, horizontal = false, radius = STRIP_BLUR_RADIUS)
+    }
+    return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888).asImageBitmap()
+}
+
 private data class Pixels(val width: Int, val height: Int, val argb: IntArray)
 
 // Downscale then three box-blur passes (≈ gaussian). At 160px wide this takes a few ms.
@@ -127,10 +144,10 @@ private fun blurredPixels(source: Bitmap): Pixels {
     return Pixels(w, h, px)
 }
 
-private fun boxBlur(px: IntArray, w: Int, h: Int, horizontal: Boolean) {
+private fun boxBlur(px: IntArray, w: Int, h: Int, horizontal: Boolean, radius: Int = BLUR_RADIUS) {
     val lines = if (horizontal) h else w
     val length = if (horizontal) w else h
-    val n = 2 * BLUR_RADIUS + 1
+    val n = 2 * radius + 1
     val line = IntArray(length)
     for (l in 0 until lines) {
         for (i in 0 until length) line[i] = px[if (horizontal) l * w + i else i * w + l]
@@ -138,14 +155,14 @@ private fun boxBlur(px: IntArray, w: Int, h: Int, horizontal: Boolean) {
         var r = 0
         var g = 0
         var b = 0
-        for (i in -BLUR_RADIUS..BLUR_RADIUS) {
+        for (i in -radius..radius) {
             val p = line[i.coerceIn(0, length - 1)]
             a += p ushr 24; r += (p shr 16) and 0xFF; g += (p shr 8) and 0xFF; b += p and 0xFF
         }
         for (i in 0 until length) {
             px[if (horizontal) l * w + i else i * w + l] = ((a / n) shl 24) or ((r / n) shl 16) or ((g / n) shl 8) or (b / n)
-            val add = line[(i + BLUR_RADIUS + 1).coerceAtMost(length - 1)]
-            val sub = line[(i - BLUR_RADIUS).coerceAtLeast(0)]
+            val add = line[(i + radius + 1).coerceAtMost(length - 1)]
+            val sub = line[(i - radius).coerceAtLeast(0)]
             a += (add ushr 24) - (sub ushr 24)
             r += ((add shr 16) and 0xFF) - ((sub shr 16) and 0xFF)
             g += ((add shr 8) and 0xFF) - ((sub shr 8) and 0xFF)
