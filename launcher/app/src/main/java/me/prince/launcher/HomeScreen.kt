@@ -124,8 +124,10 @@ private val TextSecondary = Color.White.copy(alpha = 0.75f)
 
 private val TileWidth = 200.dp
 private val TileHeight = 112.dp
-private val FavouriteTileWidth = 240.dp
-private val FavouriteTileHeight = 135.dp
+// Five across on a 960dp-wide screen, in two rows
+private val FavouriteTileWidth = 150.dp
+private val FavouriteTileHeight = 84.dp
+private const val FAVOURITE_ROWS = 2
 private val HeroHeight = 230.dp
 const val BACKDROP_HEIGHT_FRACTION = 0.72f
 private const val HERO_ROTATE_MS = 10_000L
@@ -133,7 +135,7 @@ private const val TRENDING_REFRESH_MS = 6 * 60 * 60_000L
 // The first TLS handshake after start often fails (AdGuard's HTTPS filtering?); the retry works
 private const val TRENDING_RETRY_MS = 15_000L
 private val TileShape = RoundedCornerShape(14.dp)
-private val FavouriteTileShape = RoundedCornerShape(16.dp)
+private val FavouriteTileShape = RoundedCornerShape(12.dp)
 // Left/right margin for text; rows use it as content padding so tiles can run off the screen edge
 private val EdgePadding = 56.dp
 // How far the page scrolls before the backdrop has fully dimmed
@@ -195,8 +197,9 @@ fun HomeScreen(
     var swallowKeyUp by remember { mutableStateOf<Key?>(null) }
     var refocus by remember { mutableIntStateOf(0) }
     val scroll = rememberScrollState()
-    val favouritesRow = rememberLazyListState()
+    val favouriteRows = remember { List(FAVOURITE_ROWS) { LazyListState() } }
     val firstTile = remember { FocusRequester() }
+    val movingTile = remember { FocusRequester() }
 
     LaunchedEffect(reloadKey) {
         apps = withContext(Dispatchers.IO) { loadApps(context) }
@@ -208,6 +211,8 @@ fun HomeScreen(
 
     val byPackage = remember(apps) { apps.associateBy { it.packageName } }
     val favourites = favouriteIds.mapNotNull { byPackage[it] }
+    // Row-major: the first half on top, the rest below
+    val favouritesPerRow = ((favourites.size + FAVOURITE_ROWS - 1) / FAVOURITE_ROWS).coerceAtLeast(1)
     // Favourites are already one row up
     val recents = recentIds.filter { it !in favouriteIds }.mapNotNull { byPackage[it] }.take(RECENT_COUNT)
     val others = apps.filter { it.packageName !in favouriteIds }
@@ -234,10 +239,18 @@ fun HomeScreen(
         }
         if (from < 0 || to !in favourites.indices) return true
         updateFavourites(favourites.map { it.packageName }.toMutableList().apply { add(to, removeAt(from)) })
-        // Focus stays on the moved tile but nothing scrolls it into view, so do it by hand
-        if (!favouritesRow.isFullyVisible(to)) {
-            val first = favouritesRow.firstVisibleItemIndex
-            scope.launch { favouritesRow.animateScrollToItem(if (to <= first) to else first + 1) }
+        val row = favouriteRows[to / favouritesPerRow]
+        val index = to % favouritesPerRow
+        if (from / favouritesPerRow != to / favouritesPerRow) {
+            // Crossing into the other row recomposes the tile there, which drops focus
+            scope.launch {
+                row.scrollToItem(index)
+                movingTile.requestFocusWhenAttached()
+            }
+        } else if (!row.isFullyVisible(index)) {
+            // Focus stays on the moved tile but nothing scrolls it into view, so do it by hand
+            val first = row.firstVisibleItemIndex
+            scope.launch { row.animateScrollToItem(if (index <= first) index else first + 1) }
         }
         return true
     }
@@ -246,7 +259,7 @@ fun HomeScreen(
         if (apps.isEmpty()) return@LaunchedEffect
         movingId = null
         scroll.animateScrollTo(0)
-        favouritesRow.scrollToItem(0)
+        favouriteRows.forEach { it.scrollToItem(0) }
         // On cold start the tile may not be attached for a few frames; if focus is never set,
         // Android picks an arbitrary element (seen: the Settings pill)
         firstTile.requestFocusWhenAttached()
@@ -423,17 +436,23 @@ fun HomeScreen(
                     }
                     val onFocused = { app: TvApp -> focusedApp = app }
                     val onMenu = { app: TvApp -> openMenu(MenuTarget(app, canMove = false)) }
-                    Shelf(
-                        favourites,
-                        favouritesRow,
-                        firstTile.takeIf { favourites.isNotEmpty() },
-                        onLaunch,
-                        { openMenu(MenuTarget(it, canMove = true)) },
-                        onFocused,
-                        FavouriteTileWidth,
-                        FavouriteTileHeight,
-                        FavouriteTileShape,
-                    )
+                    favourites.chunked(favouritesPerRow).forEachIndexed { row, rowApps ->
+                        Shelf(
+                            rowApps,
+                            favouriteRows[row],
+                            firstTile.takeIf { row == 0 },
+                            onLaunch,
+                            { openMenu(MenuTarget(it, canMove = true)) },
+                            onFocused,
+                            FavouriteTileWidth,
+                            FavouriteTileHeight,
+                            FavouriteTileShape,
+                            // Closer together than separate shelves, still room for the focus scale and glow
+                            verticalPadding = 12.dp,
+                            movingId = movingId,
+                            movingTile = movingTile,
+                        )
+                    }
                     if (games.isNotEmpty()) {
                         ShelfLabel("Sports")
                         SportsShelf(games, onOpenGame)
@@ -845,12 +864,15 @@ private fun Shelf(
     tileWidth: Dp = TileWidth,
     tileHeight: Dp = TileHeight,
     shape: RoundedCornerShape = TileShape,
+    verticalPadding: Dp = 22.dp,
+    movingId: String? = null,
+    movingTile: FocusRequester? = null,
 ) {
     if (apps.isEmpty()) return
     LazyRow(
         state = state,
         // Vertical room for the focus scale and glow
-        contentPadding = PaddingValues(horizontal = EdgePadding, vertical = 22.dp),
+        contentPadding = PaddingValues(horizontal = EdgePadding, vertical = verticalPadding),
         horizontalArrangement = Arrangement.spacedBy(24.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -865,6 +887,7 @@ private fun Shelf(
                 shape = shape,
                 modifier = Modifier
                     .then(if (requester != null) Modifier.focusRequester(requester) else Modifier)
+                    .then(if (movingTile != null && app.packageName == movingId) Modifier.focusRequester(movingTile) else Modifier)
                     .onFocusChanged { if (it.isFocused) onFocused(app) },
             )
         }
