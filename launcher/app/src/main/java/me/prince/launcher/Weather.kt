@@ -10,6 +10,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 private const val TAG = "Weather"
+private val FAHRENHEIT_COUNTRIES = setOf("US", "LR", "MM", "BS", "BZ", "KY", "PW", "FM", "MH")
 
 data class Weather(val temperature: Int, val summary: String)
 
@@ -21,11 +22,13 @@ fun fetchWeather(context: Context): Weather? {
         Log.w(TAG, "No location permission", e)
         null
     } ?: return null
+    val unit = if (Locale.getDefault().country in FAHRENHEIT_COUNTRIES) "fahrenheit" else "celsius"
     val url = String.format(
         Locale.US,
-        "https://api.open-meteo.com/v1/forecast?latitude=%.2f&longitude=%.2f&current=temperature_2m,weather_code",
+        "https://api.open-meteo.com/v1/forecast?latitude=%.2f&longitude=%.2f&current=temperature_2m,weather_code&temperature_unit=%s",
         location.latitude,
         location.longitude,
+        unit,
     )
     return try {
         val current = JSONObject(httpGet(url)).getJSONObject("current")

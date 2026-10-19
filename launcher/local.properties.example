@@ -14,3 +14,9 @@ tmdb.region=
 
 # What to show: all (movies + shows), movie or tv
 tmdb.feed=all
+
+# Optional: a "Sports" row with live scores from ESPN (no key needed). Leave both empty to hide it.
+# Leagues: nfl, nba, wnba, mlb, nhl, cfb (college football), cbb (men's college basketball), mls, epl
+sports.leagues=
+# Your teams, shown first: league:ESPN abbreviation, e.g. nfl:TEN,nba:GSW,epl:EVE. Their leagues are added automatically.
+sports.teams=

@@ -18,7 +18,11 @@ private const val TAG = "Trending"
 private const val API = "https://api.themoviedb.org/3"
 private const val IMAGES = "https://image.tmdb.org/t/p"
 private const val MAX_TITLES = 8
-private const val STREMIO = "com.stremio.one"
+// Apps that open stremio:///detail links, tried in order when no streaming app has the title
+private val DETAIL_APPS = listOf(
+    "com.nuvio.app" to "Nuvio",
+    "com.stremio.one" to "Stremio",
+)
 
 // Which country's streaming catalogue to match (tmdb.region in local.properties), else the TV's own country
 private val REGION = BuildConfig.TMDB_REGION.ifBlank { Locale.getDefault().country.ifBlank { "US" } }.uppercase(Locale.US)
@@ -37,6 +41,12 @@ private val PROVIDER_APPS = mapOf(
     350 to "com.apple.atve.androidtv.appletv",      // Apple TV+
     15 to "com.hulu.livingroomplus",                // Hulu
     531 to "com.cbs.ott",                           // Paramount+
+    2303 to "com.cbs.ott",                          // Paramount+ Premium
+    2616 to "com.cbs.ott",                          // Paramount+ Essential
+    386 to "com.peacocktv.peacockandroid",          // Peacock Premium
+    387 to "com.peacocktv.peacockandroid",          // Peacock Premium Plus
+    2545 to "com.fox.foxone",                       // FOX One
+    1899 to "com.wbd.stream",                       // HBO Max
 )
 
 data class TrendingTitle(
@@ -119,7 +129,7 @@ private fun toTitle(context: Context, key: String, item: JSONObject): TrendingTi
     )
 }
 
-// An installed app that streams it in your region, else Stremio's page for it (if Stremio is installed)
+// An installed app that streams it in your region, else its page in Nuvio or Stremio (whichever is installed)
 private fun watchAction(context: Context, type: String, details: JSONObject): Pair<Intent?, String?> {
     val pm = context.packageManager
     val providers = details.optJSONObject("watch/providers")?.optJSONObject("results")
@@ -130,11 +140,12 @@ private fun watchAction(context: Context, type: String, details: JSONObject): Pa
         return launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) to "Watch on ${provider.optString("provider_name")}"
     }
     val imdb = details.optJSONObject("external_ids")?.optString("imdb_id").orEmpty()
-    if (imdb.isBlank() || pm.getLeanbackLaunchIntentForPackage(STREMIO) == null) return null to null
+    if (imdb.isBlank()) return null to null
+    val (pkg, name) = DETAIL_APPS.firstOrNull { pm.getLeanbackLaunchIntentForPackage(it.first) != null } ?: return null to null
     val stremioType = if (type == "tv") "series" else "movie"
     return Intent(Intent.ACTION_VIEW, Uri.parse("stremio:///detail/$stremioType/$imdb"))
-        .setPackage(STREMIO)
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) to "Open in Stremio"
+        .setPackage(pkg)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) to "Open in $name"
 }
 
 fun TrendingTitle.decodeBackdrop(): ImageBitmap = decode(backdropJpeg).asImageBitmap()
@@ -167,5 +178,3 @@ private fun isLightEnough(logo: Bitmap): Boolean {
     }
     return count > 0 && total / count > 0.45f
 }
-
-private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }

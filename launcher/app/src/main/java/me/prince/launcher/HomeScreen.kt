@@ -108,7 +108,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.lazy.items
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 // Pure black switches OLED pixels off entirely
@@ -144,6 +150,11 @@ private val MenuShape = RoundedCornerShape(28.dp)
 private const val RECENT_COUNT = 8
 private const val SHEEN_MS = 700
 private const val WEATHER_REFRESH_MS = 30 * 60_000L
+private const val SPORTS_LIVE_REFRESH_MS = 60_000L
+private const val SPORTS_REFRESH_MS = 15 * 60_000L
+private const val SPORTS_RETRY_MS = 15_000L
+private val ScoreCardWidth = 240.dp
+private val LiveRed = Color(0xFFFF453A)
 
 private data class MenuTarget(val app: TvApp, val canMove: Boolean)
 
@@ -157,9 +168,11 @@ fun HomeScreen(
     onAppInfo: (TvApp) -> Unit,
     onWifi: () -> Unit,
     onSettings: () -> Unit,
-    onPicture: () -> Unit,
-    onSound: () -> Unit,
+    // Null hides the button (no working settings screen on this TV)
+    onPicture: (() -> Unit)?,
+    onSound: (() -> Unit)?,
     onOpenTrending: (Intent) -> Unit,
+    onOpenGame: (Intent) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -262,6 +275,29 @@ fun HomeScreen(
         delay(HERO_ROTATE_MS)
         heroIndex = (heroIndex + 1) % trending.size
     }
+    var games by remember { mutableStateOf(emptyList<Game>()) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(Unit) {
+        // Only while Home is on screen: no polling while something else is playing
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            var loaded = false
+            while (true) {
+                val fresh = withContext(Dispatchers.IO) { fetchGames(context.packageManager) }
+                if (fresh != null) {
+                    games = fresh
+                    loaded = true
+                }
+                delay(
+                    when {
+                        !loaded -> SPORTS_RETRY_MS
+                        games.any { it.state == GameState.Live } -> SPORTS_LIVE_REFRESH_MS
+                        else -> SPORTS_REFRESH_MS
+                    }
+                )
+            }
+        }
+    }
+
     val hero = trending.getOrNull(heroIndex)
     // Only the previous, current and next backdrops stay decoded
     val backdrops = remember(trending) { mutableStateMapOf<Int, ImageBitmap>() }
@@ -398,6 +434,10 @@ fun HomeScreen(
                         FavouriteTileHeight,
                         FavouriteTileShape,
                     )
+                    if (games.isNotEmpty()) {
+                        ShelfLabel("Sports")
+                        SportsShelf(games, onOpenGame)
+                    }
                     if (inputs.isNotEmpty()) {
                         ShelfLabel("Inputs")
                         Shelf(inputs, rememberLazyListState(), null, onLaunch, {}, onFocused)
@@ -701,8 +741,8 @@ private fun Header(
     now: LocalDateTime,
     onWifi: () -> Unit,
     onSettings: () -> Unit,
-    onPicture: () -> Unit,
-    onSound: () -> Unit,
+    onPicture: (() -> Unit)?,
+    onSound: (() -> Unit)?,
 ) {
     val context = LocalContext.current
     val is24h = DateFormat.is24HourFormat(context)
@@ -740,8 +780,8 @@ private fun Header(
         }
         Spacer(Modifier.weight(1f))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Pill(R.drawable.ic_picture, null, onPicture)
-            Pill(R.drawable.ic_sound, null, onSound)
+            onPicture?.let { Pill(R.drawable.ic_picture, null, it) }
+            onSound?.let { Pill(R.drawable.ic_sound, null, it) }
             Pill(R.drawable.ic_wifi, rememberNetworkLabel(), onWifi)
             Pill(R.drawable.ic_settings, "Settings", onSettings)
         }
@@ -831,7 +871,6 @@ private fun Shelf(
     }
 }
 
-// Focus lifts the tile (scale, glow in the app's colour, light rim) instead of drawing a thick border
 @Composable
 private fun AppTile(
     app: TvApp,
@@ -841,6 +880,27 @@ private fun AppTile(
     height: Dp,
     shape: RoundedCornerShape,
     modifier: Modifier,
+) {
+    FocusTile(app.glow, width, height, shape, onClick, onLongClick, modifier) {
+        if (app.hasBanner) {
+            Image(app.image, contentDescription = app.label, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        } else {
+            GlassTileContent(app, shape)
+        }
+    }
+}
+
+// Focus lifts the tile (scale, glow in the given colour, light rim) instead of drawing a thick border
+@Composable
+private fun FocusTile(
+    glow: Color,
+    width: Dp,
+    height: Dp,
+    shape: RoundedCornerShape,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)?,
+    modifier: Modifier,
+    content: @Composable () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
     val sheen = remember { Animatable(1f) }
@@ -866,7 +926,7 @@ private fun AppTile(
             focusedBorder = Border(BorderStroke(1.5.dp, Color.White.copy(alpha = 0.6f)), shape = shape),
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
-        glow = ClickableSurfaceDefaults.glow(focusedGlow = Glow(app.glow.copy(alpha = 0.55f), 20.dp)),
+        glow = ClickableSurfaceDefaults.glow(focusedGlow = Glow(glow.copy(alpha = 0.55f), 20.dp)),
     ) {
         Box(
             Modifier
@@ -896,11 +956,90 @@ private fun AppTile(
                     }
                 }
         ) {
-            if (app.hasBanner) {
-                Image(app.image, contentDescription = app.label, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            } else {
-                GlassTileContent(app, shape)
+            content()
+        }
+    }
+}
+
+@Composable
+private fun SportsShelf(games: List<Game>, onOpen: (Intent) -> Unit) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = EdgePadding, vertical = 22.dp),
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        items(games, key = { it.id }) { game ->
+            FocusTile(game.glow, ScoreCardWidth, TileHeight, TileShape, { game.launch?.let(onOpen) }, null, Modifier) {
+                ScoreCard(game)
             }
+        }
+    }
+}
+
+// Away team over home team, then the clock or start time and the network
+@Composable
+private fun ScoreCard(game: Game) {
+    val context = LocalContext.current
+    val live = game.state == GameState.Live
+    val status = when (game.state) {
+        GameState.Upcoming -> {
+            val start = game.start.atZone(ZoneId.systemDefault())
+            val time = if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a"
+            val pattern = if (start.toLocalDate() == LocalDate.now()) time else "EEE $time"
+            start.format(DateTimeFormatter.ofPattern(pattern))
+        }
+        else -> game.detail
+    }
+    Row(Modifier.fillMaxSize().glass(TileShape)) {
+        Box(
+            Modifier
+                .padding(vertical = 18.dp)
+                .width(3.dp)
+                .fillMaxHeight()
+                .background(if (game.isMine) Color.White.copy(alpha = 0.85f) else Color.Transparent, CircleShape)
+        )
+        Column(Modifier.fillMaxSize().padding(start = 11.dp, end = 14.dp, top = 12.dp, bottom = 10.dp)) {
+            val showScore = game.state != GameState.Upcoming
+            TeamLine(game.away, showScore, dim = game.state == GameState.Final && !game.away.winner)
+            Spacer(Modifier.height(4.dp))
+            TeamLine(game.home, showScore, dim = game.state == GameState.Final && !game.home.winner)
+            Spacer(Modifier.weight(1f))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (live) {
+                    Box(Modifier.size(7.dp).background(LiveRed, CircleShape))
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(
+                    status,
+                    color = if (live) TextPrimary else TextSecondary,
+                    fontSize = 13.sp,
+                    fontWeight = if (live) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                game.network?.let {
+                    Text(it, color = TextSecondary, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TeamLine(side: Side, showScore: Boolean, dim: Boolean) {
+    val color = if (dim) TextSecondary else TextPrimary
+    Row(Modifier.height(26.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (side.logo != null) {
+            Image(side.logo, contentDescription = null, modifier = Modifier.size(24.dp))
+        } else {
+            Spacer(Modifier.size(24.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(side.abbr, color = color, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Spacer(Modifier.weight(1f))
+        if (showScore && side.score != null) {
+            Text(side.score, color = color, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

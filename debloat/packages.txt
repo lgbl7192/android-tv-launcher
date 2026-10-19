@@ -1,3 +1,19 @@
 # Your TV's removal list: one package name per line, # for comments.
 # Start from examples/xiaomi-tv.txt if you have a Xiaomi TV, or ask your coding agent to audit your TV
 # (`adb shell pm list packages`) and fill this in. Review it before running debloat.sh.
+
+# NVIDIA SHIELD Android TV (2019, Android 11)
+com.nvidia.tegrazone3                                     # NVIDIA Games
+com.nvidia.nvgamecast                                     # Game broadcasting
+com.google.android.play.games                             # Google Play Games
+com.google.android.videos                                 # Google TV movie store
+# com.google.android.tvrecommendations                    # Removing it crashed the system while the stock launcher was running; harmless once that's disabled
+android.autoinstalls.config.nvidia                        # Silently installs partner apps
+com.nvidia.stub.com.disney.datg.videoplatforms.android.abc  # ABC stub
+com.nvidia.feedback                                       # NVIDIA feedback reporter
+com.google.android.feedback                               # Google feedback reporter
+com.nvidia.stats                                          # NVIDIA usage stats
+com.nvidia.shield.beta                                    # SHIELD beta program
+com.nvidia.shieldbeta                                     # SHIELD beta program
+com.android.printspooler                                  # Printing
+com.android.gallery3d                                     # Gallery

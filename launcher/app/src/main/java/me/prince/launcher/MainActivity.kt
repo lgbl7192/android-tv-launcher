@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -44,6 +45,9 @@ class MainActivity : ComponentActivity() {
             addDataScheme("package")
         })
 
+        val picture = openable(pictureSettings())
+        val sound = openable(Intent(Settings.ACTION_SOUND_SETTINGS))
+
         setContent {
             HomeScreen(
                 reloadKey = reloadKey,
@@ -55,10 +59,11 @@ class MainActivity : ComponentActivity() {
                 },
                 onWifi = { launch(Intent(Settings.ACTION_WIFI_SETTINGS)) },
                 onSettings = { launch(Intent(Settings.ACTION_SETTINGS)) },
-                onPicture = { launch(pictureSettings()) },
-                onSound = { launch(Intent(Settings.ACTION_SOUND_SETTINGS)) },
+                onPicture = picture?.let { { launch(it) } },
+                onSound = sound?.let { { launch(it) } },
                 // Stremio title links only work on a cold start; plain app launches don't need that
                 onOpenTrending = { if (it.data != null) launchFresh(it) else launch(it) },
+                onOpenGame = { launch(it) },
             )
         }
     }
@@ -84,7 +89,24 @@ class MainActivity : ComponentActivity() {
         return if (packageManager.resolveActivity(xiaomi, 0) != null) xiaomi else Intent(Settings.ACTION_DISPLAY_SETTINGS)
     }
 
-    // Live TV apps (HDMI inputs) and Stremio (title links) can ignore the link if they're already running,
+    // Null when nothing handles the intent, or the activity it resolves to isn't in the app
+    // (the SHIELD's Settings declares a Sound screen that crashes with ClassNotFoundException)
+    private fun openable(intent: Intent): Intent? {
+        val activity = packageManager.resolveActivity(intent, 0)?.activityInfo ?: return null
+        return try {
+            createPackageContext(activity.packageName, CONTEXT_INCLUDE_CODE or CONTEXT_IGNORE_SECURITY)
+                .classLoader.loadClass(activity.name)
+            intent
+        } catch (e: ClassNotFoundException) {
+            Log.w(TAG, "Missing ${activity.name}", e)
+            null
+        } catch (e: PackageManager.NameNotFoundException) {
+            Log.w(TAG, "No package ${activity.packageName}", e)
+            null
+        }
+    }
+
+    // Live TV apps (HDMI inputs) and Nuvio/Stremio (title links) can ignore the link if they're already running,
     // so close the target's background process first. It's always in the background while we're Home.
     private fun launchFresh(intent: Intent) {
         packageManager.resolveActivity(intent, 0)?.activityInfo?.packageName?.let {

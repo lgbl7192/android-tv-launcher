@@ -74,8 +74,9 @@ fun Modifier.glass(shape: Shape, enabled: Boolean = true): Modifier = composed {
         )
 }
 
-// The trending backdrop as it actually appears on screen (faded left, top and bottom, on black), blurred.
-// Mirrors the masks in Backdrop(); assumes a 16:9 screen with the backdrop covering the top 72%.
+// The trending backdrop as it actually appears on screen, blurred. Mirrors the masks in Backdrop(): the top
+// is darkened, the left and bottom fade out to transparent (so the glow behind the shelves shows through the
+// glass just as it does around it). Assumes a 16:9 screen with the backdrop covering the top 72%.
 fun frostedBackdrop(backdrop: Bitmap, heightFraction: Float): ImageBitmap {
     val small = blurredPixels(backdrop)
     val (w, h, px) = small
@@ -85,12 +86,12 @@ fun frostedBackdrop(backdrop: Bitmap, heightFraction: Float): ImageBitmap {
         val topDarken = 1f - 0.5f * (1f - v / 0.25f).coerceIn(0f, 1f)
         for (x in 0 until w) {
             val leftFade = 0.2f + 0.8f * (x / (w * 0.6f)).coerceAtMost(1f)
-            val k = bottomFade * topDarken * leftFade
+            val a = (255 * bottomFade * leftFade).toInt()
             val p = px[y * w + x]
-            val r = (((p shr 16) and 0xFF) * k).toInt()
-            val g = (((p shr 8) and 0xFF) * k).toInt()
-            val b = ((p and 0xFF) * k).toInt()
-            px[y * w + x] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            val r = (((p shr 16) and 0xFF) * topDarken).toInt()
+            val g = (((p shr 8) and 0xFF) * topDarken).toInt()
+            val b = ((p and 0xFF) * topDarken).toInt()
+            px[y * w + x] = (a shl 24) or (r shl 16) or (g shl 8) or b
         }
     }
     return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888).asImageBitmap()
