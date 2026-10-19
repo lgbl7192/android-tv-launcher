@@ -37,6 +37,8 @@ private val PROVIDER_APPS = mapOf(
     350 to "com.apple.atve.androidtv.appletv",      // Apple TV+
     15 to "com.hulu.livingroomplus",                // Hulu
     531 to "com.cbs.ott",                           // Paramount+
+    386 to "com.peacocktv.peacockandroid",          // Peacock Premium
+    387 to "com.peacocktv.peacockandroid",          // Peacock Premium Plus
 )
 
 data class TrendingTitle(

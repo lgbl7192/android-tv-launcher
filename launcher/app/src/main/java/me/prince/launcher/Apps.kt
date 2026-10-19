@@ -16,11 +16,17 @@ import androidx.palette.graphics.Palette
 // Favourites until changed from the long-press menu (Move / Add / Remove); anything not installed is skipped.
 // Find package names with: adb shell pm list packages -3
 private val DEFAULT_FAVOURITES = listOf(
-    "com.netflix.ninja",                  // Netflix
+    "com.liskovsoft.smarttubetv.beta",    // SmartTube beta
+    "com.teamsmart.videomanager.tv",      // SmartTube
+    "com.nuvio.tv",                       // Nuvio
+    "ar.tvplayer.tv",                     // TiviMate
+    "com.spotify.tv.android",             // Spotify
+    "com.peacocktv.peacockandroid",       // Peacock
     "com.google.android.youtube.tv",      // YouTube
-    "com.amazon.amazonvideo.livingroom",  // Prime Video
-    "in.startv.hotstar",                  // JioHotstar
-    "com.disney.disneyplus",              // Disney+
+    "com.cbs.ott",                        // Paramount+
+    "com.fox.one",                        // Fox One
+    "com.esaba.downloader",               // Downloader
+    "com.apple.atve.androidtv.appletv",   // Apple TV
 )
 
 private const val PREFS = "launcher"
