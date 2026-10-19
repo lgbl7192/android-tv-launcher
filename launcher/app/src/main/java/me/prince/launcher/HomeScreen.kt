@@ -157,8 +157,9 @@ fun HomeScreen(
     onAppInfo: (TvApp) -> Unit,
     onWifi: () -> Unit,
     onSettings: () -> Unit,
-    onPicture: () -> Unit,
-    onSound: () -> Unit,
+    // Null hides the button (no working settings screen on this TV)
+    onPicture: (() -> Unit)?,
+    onSound: (() -> Unit)?,
     onOpenTrending: (Intent) -> Unit,
 ) {
     val context = LocalContext.current
@@ -701,8 +702,8 @@ private fun Header(
     now: LocalDateTime,
     onWifi: () -> Unit,
     onSettings: () -> Unit,
-    onPicture: () -> Unit,
-    onSound: () -> Unit,
+    onPicture: (() -> Unit)?,
+    onSound: (() -> Unit)?,
 ) {
     val context = LocalContext.current
     val is24h = DateFormat.is24HourFormat(context)
@@ -740,8 +741,8 @@ private fun Header(
         }
         Spacer(Modifier.weight(1f))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Pill(R.drawable.ic_picture, null, onPicture)
-            Pill(R.drawable.ic_sound, null, onSound)
+            onPicture?.let { Pill(R.drawable.ic_picture, null, it) }
+            onSound?.let { Pill(R.drawable.ic_sound, null, it) }
             Pill(R.drawable.ic_wifi, rememberNetworkLabel(), onWifi)
             Pill(R.drawable.ic_settings, "Settings", onSettings)
         }
