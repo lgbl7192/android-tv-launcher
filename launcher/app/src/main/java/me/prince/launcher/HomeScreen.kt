@@ -102,18 +102,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.items
-import android.util.Log
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.graphics.drawscope.scale
-import androidx.compose.ui.graphics.layer.drawLayer
-import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.IntSize
-import kotlinx.coroutines.flow.collectLatest
-import kotlin.math.roundToInt
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -154,10 +144,6 @@ private const val SPORTS_REFRESH_MS = 15 * 60_000L
 private const val SPORTS_RETRY_MS = 15_000L
 // The pinned bar fades in over this much scroll
 private val BarFadeDistance = 40.dp
-// The strip under the bar is captured at 1/10 size (~192x23px), which is most of the blur for free
-private const val BAR_BLUR_SCALE = 10
-private const val BAR_BLUR_REFRESH_MS = 500L
-private const val BAR_BLUR_MIN_INTERVAL_MS = 80L
 private val ScoreCardWidth = 240.dp
 private val LiveRed = Color(0xFFFF453A)
 
@@ -332,47 +318,6 @@ fun HomeScreen(
     val verticalScrollSpec = remember(edgeMargin, barHeight) { minimalScroll(edgeMargin, topInset = barHeight.toFloat()) }
     val barFadeDistance = with(density) { BarFadeDistance.toPx() }
 
-    val contentLayer = rememberGraphicsLayer()
-    val stripLayer = rememberGraphicsLayer()
-    var barBlur by remember { mutableStateOf<ImageBitmap?>(null) }
-    var blurFailed by remember { mutableStateOf(false) }
-    val layoutDirection = LocalLayoutDirection.current
-    suspend fun captureBar() {
-        val size = contentLayer.size
-        if (size.width == 0 || barHeight == 0) return
-        val strip = IntSize((size.width / BAR_BLUR_SCALE).coerceAtLeast(1), (barHeight / BAR_BLUR_SCALE).coerceAtLeast(1))
-        stripLayer.record(density, layoutDirection, strip) {
-            scale(1f / BAR_BLUR_SCALE, pivot = Offset.Zero) { drawLayer(contentLayer) }
-        }
-        try {
-            val capture = stripLayer.toImageBitmap()
-            barBlur = withContext(Dispatchers.Default) { blurredStrip(capture) }
-        } catch (e: RuntimeException) {
-            Log.w("HomeScreen", "Bar blur unavailable, using the frosted backdrop", e)
-            blurFailed = true
-        }
-    }
-    LaunchedEffect(Unit) {
-        // Nothing to blur at the top of the page, or while another app is in front
-        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            snapshotFlow { scroll.value > 0 && !blurFailed }.collectLatest { shown ->
-                if (!shown) return@collectLatest
-                launch {
-                    snapshotFlow { scroll.value }.collect {
-                        captureBar()
-                        // Capturing every scroll frame costs jank; a blur doesn't need 60fps
-                        delay(BAR_BLUR_MIN_INTERVAL_MS)
-                    }
-                }
-                // The backdrop crossfade, hero rotation and tile focus also change what's under the bar
-                while (true) {
-                    delay(BAR_BLUR_REFRESH_MS)
-                    captureBar()
-                }
-            }
-        }
-    }
-
     MaterialTheme(colorScheme = darkColorScheme()) {
         CompositionLocalProvider(
             LocalBringIntoViewSpec provides rowScrollSpec,
@@ -412,15 +357,6 @@ fun HomeScreen(
                         drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))))
                     }
             ) {
-                // Recorded so the pinned bar can blur whatever is passing under it
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .drawWithContent {
-                            contentLayer.record { this@drawWithContent.drawContent() }
-                            drawLayer(contentLayer)
-                        }
-                ) {
                 CompositionLocalProvider(LocalBringIntoViewSpec provides verticalScrollSpec) {
                 Column(
                     Modifier
@@ -470,10 +406,7 @@ fun HomeScreen(
                 }
                 }
                 }
-                }
                 TopBar(
-                    blur = { barBlur },
-                    fallback = null,
                     alpha = { (scroll.value / barFadeDistance).coerceIn(0f, 1f) },
                     shift = { shift },
                     onHeight = { barHeight = it },
@@ -695,18 +628,17 @@ private fun Header(
     }
 }
 
-// Pinned over the page. Invisible at the top; once scrolled, a live blur of what's passing underneath.
+// Pinned over the page. Invisible at the top; once scrolled, frosted glass over whatever the glass source is.
 // Lambdas so scrolling only redraws the bar instead of recomposing it.
 @Composable
 private fun TopBar(
-    blur: () -> ImageBitmap?,
-    fallback: GlassSource?,
     alpha: () -> Float,
     shift: () -> IntOffset,
     onHeight: (Int) -> Unit,
     below: FocusRequester,
     content: @Composable () -> Unit,
 ) {
+    val source = LocalGlassSource.current
     Column(
         Modifier
             .fillMaxWidth()
@@ -722,18 +654,7 @@ private fun TopBar(
                 if (a == 0f) return@drawBehind
                 // Hide the sharp page underneath first
                 drawRect(Color.Black.copy(alpha = a))
-                val image = blur()
-                if (fallback != null) {
-                    drawImage(
-                        fallback.image,
-                        dstOffset = IntOffset(fallback.bounds.left.roundToInt(), fallback.bounds.top.roundToInt()),
-                        dstSize = IntSize(fallback.bounds.width.roundToInt(), fallback.bounds.height.roundToInt()),
-                        alpha = a * fallback.alpha,
-                        filterQuality = FilterQuality.Low,
-                    )
-                } else if (image != null) {
-                    drawImage(image, dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()), alpha = a, filterQuality = FilterQuality.Low)
-                }
+                source?.let { drawGlassSource(it, Offset.Zero, a) }
                 drawRect(Color.Black.copy(alpha = 0.25f * a))
                 drawRect(Color.White.copy(alpha = 0.06f * a))
                 val edge = 1.dp.toPx()
