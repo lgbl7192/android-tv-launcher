@@ -2,11 +2,9 @@ package me.prince.launcher
 
 import android.content.Context
 import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.animation.core.animateDpAsState
 import android.app.Activity
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -17,9 +15,7 @@ import android.text.format.DateFormat
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.unit.Dp
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.tv.material3.Glow
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -67,7 +63,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -81,9 +76,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -141,18 +133,10 @@ private val TileHeight = 112.dp
 private val FavouriteTileWidth = 150.dp
 private val FavouriteTileHeight = 84.dp
 private const val FAVOURITE_ROWS = 2
-private val HeroHeight = 230.dp
-const val BACKDROP_HEIGHT_FRACTION = 0.72f
-private const val HERO_ROTATE_MS = 10_000L
-private const val TRENDING_REFRESH_MS = 6 * 60 * 60_000L
-// The first TLS handshake after start often fails (AdGuard's HTTPS filtering?); the retry works
-private const val TRENDING_RETRY_MS = 15_000L
 private val TileShape = RoundedCornerShape(14.dp)
 private val FavouriteTileShape = RoundedCornerShape(12.dp)
 // Left/right margin for text; rows use it as content padding so tiles can run off the screen edge
 private val EdgePadding = 56.dp
-// How far the page scrolls before the backdrop has fully dimmed
-private val BackdropFadeDistance = 300.dp
 
 // OLED burn-in care: static UI drifts a few px, dims when idle and at night. Set to false on LCD TVs.
 private const val OLED_CARE = true
@@ -192,7 +176,6 @@ fun HomeScreen(
     // Null hides the button (no working settings screen on this TV)
     onPicture: (() -> Unit)?,
     onSound: (() -> Unit)?,
-    onOpenTrending: (Intent) -> Unit,
     onOpenGame: (Intent) -> Unit,
 ) {
     val context = LocalContext.current
@@ -288,30 +271,6 @@ fun HomeScreen(
     val shownApp = focusedApp ?: favourites.firstOrNull() ?: others.firstOrNull()
     val glow by animateColorAsState(shownApp?.glow ?: Background, tween(600), label = "glow")
 
-    var trending by remember { mutableStateOf(emptyList<TrendingTitle>()) }
-    var heroIndex by remember { mutableIntStateOf(0) }
-    var heroFocused by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            // Keep the old titles if a refresh fails
-            val fresh = withContext(Dispatchers.IO) { fetchTrending(context) }
-            if (fresh.isNotEmpty()) {
-                trending = fresh
-                heroIndex = 0
-            }
-            // A network blip at boot shouldn't hide the row for six hours
-            delay(if (trending.isEmpty()) TRENDING_RETRY_MS else TRENDING_REFRESH_MS)
-        }
-    }
-    // Minimal scroll would leave the hero's title under the pinned bar
-    LaunchedEffect(heroFocused) {
-        if (heroFocused) scroll.animateScrollTo(0)
-    }
-    LaunchedEffect(heroIndex, heroFocused, trending) {
-        if (heroFocused || trending.size < 2) return@LaunchedEffect
-        delay(HERO_ROTATE_MS)
-        heroIndex = (heroIndex + 1) % trending.size
-    }
     var games by remember { mutableStateOf(emptyList<Game>()) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(Unit) {
@@ -333,21 +292,6 @@ fun HomeScreen(
                 )
             }
         }
-    }
-
-    val hero = trending.getOrNull(heroIndex)
-    // Only the previous, current and next backdrops stay decoded
-    val backdrops = remember(trending) { mutableStateMapOf<Int, ImageBitmap>() }
-    LaunchedEffect(trending, heroIndex) {
-        if (trending.isEmpty()) return@LaunchedEffect
-        val keep = listOf(heroIndex, heroIndex + 1, heroIndex - 1).map { it.mod(trending.size) }
-        (backdrops.keys - keep.toSet()).forEach { backdrops.remove(it) }
-        for (i in keep) {
-            if (i !in backdrops) backdrops[i] = withContext(Dispatchers.Default) { trending[i].decodeBackdrop() }
-        }
-    }
-    fun stepHero(by: Int) {
-        heroIndex = (heroIndex + by).mod(trending.size)
     }
 
     val now = rememberNow()
@@ -461,24 +405,13 @@ fun HomeScreen(
                                 0f to glow.copy(alpha = 0.9f),
                                 0.45f to glow.copy(alpha = 0.3f),
                                 1f to Color.Transparent,
-                                // With a backdrop up top, the glow sits behind the shelves instead
-                                center = Offset(size.width * 0.36f, size.height * if (hero != null) 0.85f else 0.42f),
+                                center = Offset(size.width * 0.36f, size.height * 0.42f),
                                 radius = size.width * 0.6f,
                             )
                         )
                         drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))))
                     }
             ) {
-                // Scrolling down dims the backdrop and lifts it a little slower than the page (parallax)
-                val fade = (scroll.value / with(density) { BackdropFadeDistance.toPx() }).coerceIn(0f, 1f)
-                val backdropAlpha = 1f - 0.75f * fade
-                val parallax = scroll.value * 0.4f
-                val screenWidth = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
-                val glassSource = hero?.let {
-                    val height = screenWidth * it.frosted.height / it.frosted.width
-                    GlassSource(it.frosted, Rect(0f, -parallax, screenWidth, height - parallax), backdropAlpha)
-                }
-                CompositionLocalProvider(LocalGlassSource provides glassSource) {
                 // Recorded so the pinned bar can blur whatever is passing under it
                 Box(
                     Modifier
@@ -488,7 +421,6 @@ fun HomeScreen(
                             drawLayer(contentLayer)
                         }
                 ) {
-                backdrops[heroIndex]?.let { Backdrop(it, backdropAlpha, parallax) }
                 CompositionLocalProvider(LocalBringIntoViewSpec provides verticalScrollSpec) {
                 Column(
                     Modifier
@@ -499,23 +431,8 @@ fun HomeScreen(
                 ) {
                 CompositionLocalProvider(LocalBringIntoViewSpec provides rowScrollSpec) {
                     Spacer(Modifier.height(with(density) { barHeight.toDp() }))
-                    if (hero != null) {
-                        Spacer(Modifier.height(4.dp))
-                        val movingLabel = movingId?.let { id -> byPackage[id]?.label }
-                        Hero(
-                            title = hero,
-                            label = movingLabel?.let { "Moving $it  ·  ◀ ▶ to move, OK to finish" } ?: "Trending this week",
-                            index = heroIndex,
-                            count = trending.size,
-                            onOpen = { hero.action?.let(onOpenTrending) },
-                            onStep = ::stepHero,
-                            onFocusChange = { heroFocused = it },
-                        )
-                        Spacer(Modifier.height(4.dp))
-                    } else {
-                        Spacer(Modifier.height(118.dp))
-                        AppTitle(shownApp?.label.orEmpty(), moving = movingId != null)
-                    }
+                    Spacer(Modifier.height(118.dp))
+                    AppTitle(shownApp?.label.orEmpty(), moving = movingId != null)
                     val onFocused = { app: TvApp -> focusedApp = app }
                     val onMenu = { app: TvApp -> openMenu(MenuTarget(app, canMove = false)) }
                     favourites.chunked(favouritesPerRow).forEachIndexed { row, rowApps ->
@@ -556,14 +473,13 @@ fun HomeScreen(
                 }
                 TopBar(
                     blur = { barBlur },
-                    fallback = glassSource.takeIf { blurFailed },
+                    fallback = null,
                     alpha = { (scroll.value / barFadeDistance).coerceIn(0f, 1f) },
                     shift = { shift },
                     onHeight = { barHeight = it },
                     below = page,
                 ) {
                     Header(now, onWifi, onSettings, onPicture, onSound)
-                }
                 }
             }
         }
@@ -614,7 +530,6 @@ private suspend fun FocusRequester.requestFocusWhenAttached() {
     }
 }
 
-// Fallback heading when there's no trending row (no TMDB key or offline)
 @Composable
 private fun AppTitle(label: String, moving: Boolean) {
     Row(Modifier.padding(horizontal = EdgePadding), verticalAlignment = Alignment.Bottom) {
@@ -635,128 +550,6 @@ private fun AppTitle(label: String, moving: Boolean) {
                 color = TextSecondary,
                 fontSize = 15.sp,
                 modifier = Modifier.padding(bottom = 10.dp),
-            )
-        }
-    }
-}
-
-// Full-width art behind the header, faded so the text on the left and the shelves below stay readable.
-// Top-aligned so frostedBackdrop() can line its blurred copy up with it.
-@Composable
-private fun Backdrop(image: ImageBitmap, alpha: Float, parallax: Float) {
-    Crossfade(image, animationSpec = tween(1200), label = "backdrop") { shown ->
-        Image(
-            shown,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            alignment = Alignment.TopCenter,
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(BACKDROP_HEIGHT_FRACTION)
-                .graphicsLayer {
-                    this.alpha = alpha
-                    translationY = -parallax
-                    // Fade the image itself out (not paint black over it) so the glow behind the shelves shows through without a seam
-                    compositingStrategy = CompositingStrategy.Offscreen
-                }
-                .drawWithContent {
-                    drawContent()
-                    drawRect(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.5f), 0.25f to Color.Transparent))
-                    drawRect(
-                        Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.2f), 0.6f to Color.Black),
-                        blendMode = BlendMode.DstIn,
-                    )
-                    drawRect(
-                        Brush.verticalGradient(0.5f to Color.Black, 1f to Color.Transparent),
-                        blendMode = BlendMode.DstIn,
-                    )
-                },
-        )
-    }
-}
-
-// Up from favourites focuses the button; left/right flips titles there, otherwise they rotate on their own
-@Composable
-private fun Hero(
-    title: TrendingTitle,
-    label: String,
-    index: Int,
-    count: Int,
-    onOpen: () -> Unit,
-    onStep: (Int) -> Unit,
-    onFocusChange: (Boolean) -> Unit,
-) {
-    Column(Modifier.height(HeroHeight).padding(horizontal = EdgePadding)) {
-        Text(label, color = TextSecondary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-        Spacer(Modifier.height(10.dp))
-        if (title.logo != null) {
-            Image(
-                title.logo,
-                contentDescription = title.title,
-                contentScale = ContentScale.Fit,
-                alignment = Alignment.CenterStart,
-                modifier = Modifier.height(68.dp).widthIn(max = 340.dp),
-            )
-        } else {
-            Text(
-                title.title,
-                color = TextPrimary,
-                fontSize = 40.sp,
-                fontFamily = UiDisplay,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.height(68.dp).widthIn(max = 560.dp),
-            )
-        }
-        Spacer(Modifier.height(10.dp))
-        Text(title.meta, color = TextSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-        Spacer(Modifier.height(6.dp))
-        Text(
-            title.overview,
-            color = TextSecondary,
-            fontSize = 15.sp,
-            lineHeight = 21.sp,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 520.dp),
-        )
-        Spacer(Modifier.weight(1f))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (title.action != null) {
-                Pill(
-                    R.drawable.ic_play,
-                    title.actionLabel,
-                    onOpen,
-                    Modifier
-                        .onFocusChanged { onFocusChange(it.isFocused) }
-                        .onPreviewKeyEvent {
-                            if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                            when (it.key) {
-                                Key.DirectionLeft -> onStep(-1)
-                                Key.DirectionRight -> onStep(1)
-                                else -> return@onPreviewKeyEvent false
-                            }
-                            true
-                        },
-                )
-                Spacer(Modifier.width(18.dp))
-            }
-            PageDots(index, count)
-        }
-    }
-}
-
-// Apple-style page control: the current page is a wider capsule
-@Composable
-private fun PageDots(index: Int, count: Int) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        repeat(count) { dot ->
-            val width by animateDpAsState(if (dot == index) 18.dp else 6.dp, tween(300), label = "dot")
-            Box(
-                Modifier
-                    .size(width, 6.dp)
-                    .background(Color.White.copy(alpha = if (dot == index) 0.95f else 0.35f), CircleShape)
             )
         }
     }

@@ -33,7 +33,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
 // Android 11 has no real-time blur (RenderEffect is API 31), so glass samples a pre-blurred copy of
-// whatever is drawn behind it: the trending backdrop on the home screen, a screen capture behind the menu.
+// whatever is drawn behind it: the wallpaper on the home screen, a screen capture behind the menu.
 class GlassSource(val image: ImageBitmap, val bounds: Rect, val alpha: Float = 1f)
 
 val LocalGlassSource = compositionLocalOf<GlassSource?> { null }
@@ -74,29 +74,6 @@ fun Modifier.glass(shape: Shape, enabled: Boolean = true): Modifier = composed {
             ),
             shape,
         )
-}
-
-// The trending backdrop as it actually appears on screen, blurred. Mirrors the masks in Backdrop(): the top
-// is darkened, the left and bottom fade out to transparent (so the glow behind the shelves shows through the
-// glass just as it does around it). Assumes a 16:9 screen with the backdrop covering the top 72%.
-fun frostedBackdrop(backdrop: Bitmap, heightFraction: Float): ImageBitmap {
-    val small = blurredPixels(backdrop)
-    val (w, h, px) = small
-    for (y in 0 until h) {
-        val v = y / (h * heightFraction)
-        val bottomFade = if (v < 0.5f) 1f else (1f - (v - 0.5f) / 0.5f).coerceIn(0f, 1f)
-        val topDarken = 1f - 0.5f * (1f - v / 0.25f).coerceIn(0f, 1f)
-        for (x in 0 until w) {
-            val leftFade = 0.2f + 0.8f * (x / (w * 0.6f)).coerceAtMost(1f)
-            val a = (255 * bottomFade * leftFade).toInt()
-            val p = px[y * w + x]
-            val r = (((p shr 16) and 0xFF) * topDarken).toInt()
-            val g = (((p shr 8) and 0xFF) * topDarken).toInt()
-            val b = ((p and 0xFF) * topDarken).toInt()
-            px[y * w + x] = (a shl 24) or (r shl 16) or (g shl 8) or b
-        }
-    }
-    return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888).asImageBitmap()
 }
 
 // Small blurred copy of the window, for the glass behind the long-press menu
