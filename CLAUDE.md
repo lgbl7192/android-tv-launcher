@@ -44,5 +44,5 @@ Always ship release (R8); debug Compose is too slow on TV hardware.
 ## Gotchas already handled in code
 - Compose for TV pins the focused item 30% from the edge, scrolling the header off-screen; `minimalScroll()` (a custom BringIntoViewSpec) only scrolls when an item would leave the screen.
 - On cold start the first tile isn't attached for a few frames; focus is requested with a short retry loop.
-- The first TLS handshake after start sometimes fails (seen with AdGuard's HTTPS filtering); the wallpaper and sports loops retry every 15s until they get data, and the last photo shows from disk meanwhile.
+- The first TLS handshake after start sometimes fails (seen with AdGuard's HTTPS filtering); the wallpaper, sports and weather loops retry every 15s until they get data, and the last photo shows from disk meanwhile.
 - Dialogs are separate windows: key presses in a panel don't reach HomeScreen's `onPreviewKeyEvent`, and their backdrop is a still capture of the Home window.

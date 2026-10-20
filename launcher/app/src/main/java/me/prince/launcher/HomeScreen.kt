@@ -133,6 +133,7 @@ private val MenuShape = RoundedCornerShape(28.dp)
 private const val RECENT_COUNT = 8
 private const val SHEEN_MS = 700
 private const val WEATHER_REFRESH_MS = 30 * 60_000L
+private const val WEATHER_RETRY_MS = 15_000L
 private const val SPORTS_LIVE_REFRESH_MS = 60_000L
 private const val SPORTS_REFRESH_MS = 15 * 60_000L
 private const val SPORTS_RETRY_MS = 15_000L
@@ -693,7 +694,7 @@ private fun Header(
     val weather by produceState<Weather?>(null) {
         while (true) {
             value = withContext(Dispatchers.IO) { fetchWeather(context) } ?: value
-            delay(WEATHER_REFRESH_MS)
+            delay(if (value == null) WEATHER_RETRY_MS else WEATHER_REFRESH_MS)
         }
     }
 
