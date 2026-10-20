@@ -25,6 +25,12 @@ private const val LIST_REFRESH_MS = 7 * 24 * 3_600_000L
 private const val RETRY_MS = 15_000L
 private const val MAX_NAME = 50
 private const val MAX_ARTIST = 40
+// Featured, but not wallpapers: a nuclear test, a shell close-up and a manuscript diagram
+private val EXCLUDED = setOf(
+    "File:Operation Crossroads Baker Edit.jpg",
+    "File:Ensis ensis (Linnaeus 1758).jpg",
+    "File:Bartolomeu Velho 1568.jpg",
+)
 
 private val USER_LINK = Regex("""<a\b[^>]*\btitle="User:[^"]*"[^>]*>(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
 private val HTML_TAG = Regex("<[^>]*>")
@@ -174,6 +180,7 @@ private fun parsePhoto(page: JSONObject): Photo? {
     val height = info.optInt("height")
     if (width < MIN_WIDTH || height <= 0 || width.toDouble() / height !in ASPECT_RATIOS) return null
     val title = page.optString("title").ifBlank { return null }
+    if (title in EXCLUDED) return null
     val url = info.optString("thumburl").ifBlank { return null }
     val metadata = info.optJSONObject("extmetadata")
     fun field(key: String) = metadata?.optJSONObject(key)?.optString("value").orEmpty()
