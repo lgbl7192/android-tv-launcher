@@ -5,12 +5,50 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.util.Log
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.toSize
+import androidx.tv.material3.LocalTextStyle
+import androidx.tv.material3.Text
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.net.URLEncoder
+import kotlin.math.roundToInt
 import kotlin.random.Random
 
 private const val TAG = "Wallpaper"
@@ -25,6 +63,11 @@ private const val LIST_REFRESH_MS = 7 * 24 * 3_600_000L
 private const val RETRY_MS = 15_000L
 private const val MAX_NAME = 50
 private const val MAX_ARTIST = 40
+internal const val CROSSFADE_MS = 1200
+// The photo runs this far below the screen, so the parallax never shows its bottom edge
+private val ParallaxRange = 60.dp
+// The theme's scrim over the photo at full fade
+private const val SCROLLED_SCRIM = 0.75f
 // Featured, but not wallpapers: a nuclear test, a shell close-up and a manuscript diagram
 private val EXCLUDED = setOf(
     "File:Operation Crossroads Baker Edit.jpg",
@@ -58,7 +101,6 @@ data class Photo(
 ) {
     // The attribution CC BY and CC BY-SA ask for, e.g. "Chensiyuan, CC BY-SA 4.0"
     val credit: String get() = listOf(artist, license).filter { it.isNotBlank() }.joinToString(", ")
-    val caption: String get() = listOf(name, credit).filter { it.isNotBlank() }.joinToString(" · ")
 }
 
 // What to show now, and how long to wait before calling updateWallpaper again
@@ -83,9 +125,8 @@ fun updateWallpaper(context: Context, prefs: HomePrefs, skip: Boolean = false): 
     }
 }
 
-// Centre-cropped to the screen's aspect ratio and no bigger than width x height (never upscaled), uploaded ahead of
-// drawing. Null if the photo has since been replaced on disk.
-fun decodeWallpaper(context: Context, photo: Photo, width: Int, height: Int): Bitmap? {
+// Centre-cropped to the aspect ratio of width x height and no bigger (never upscaled), uploaded ahead of drawing
+private fun decodeWallpaper(context: Context, photo: Photo, width: Int, height: Int): Bitmap? {
     val source = BitmapFactory.decodeFile(photoFile(wallpaperDir(context), photo).path) ?: return null
     val crop = centreCrop(source.width, source.height, width, height)
     val scale = minOf(1f, width.toFloat() / crop.width)
@@ -303,4 +344,129 @@ private fun photoFrom(json: JSONObject): Photo? {
     val title = json.optString("title").ifBlank { return null }
     val url = json.optString("url").ifBlank { return null }
     return Photo(title, url, json.optString("name"), json.optString("artist"), json.optString("license"))
+}
+
+class WallpaperImage(val photo: Photo, val image: ImageBitmap, val frosted: ImageBitmap)
+
+// Blocking; null if the photo has since been replaced on disk
+fun loadWallpaperImage(context: Context, photo: Photo, size: IntSize): WallpaperImage? {
+    val bitmap = decodeWallpaper(context, photo, size.width, size.height) ?: return null
+    return WallpaperImage(photo, bitmap.asImageBitmap(), frostedWallpaper(bitmap))
+}
+
+@Stable
+class WallpaperState {
+    var shown by mutableStateOf<WallpaperImage?>(null)
+        private set
+    var outgoing by mutableStateOf<WallpaperImage?>(null)
+        private set
+    private val fadeIn = Animatable(1f)
+    val shownAlpha: Float get() = if (outgoing != null) fadeIn.value else 1f
+
+    // The first photo appears at once: after a cold start it's the one that was already up
+    suspend fun show(image: WallpaperImage) {
+        val previous = shown
+        shown = image
+        if (previous == null) return
+        outgoing = previous
+        try {
+            fadeIn.snapTo(0f)
+            fadeIn.animateTo(1f, tween(CROSSFADE_MS))
+        } finally {
+            outgoing = null
+        }
+    }
+}
+
+@Composable
+fun wallpaperSize(): IntSize {
+    val configuration = LocalConfiguration.current
+    return with(LocalDensity.current) {
+        IntSize(configuration.screenWidthDp.dp.roundToPx(), (configuration.screenHeightDp.dp + ParallaxRange).roundToPx())
+    }
+}
+
+// Behind the header, the title and the shelves. In the photo's coordinates, so they parallax with it and
+// frostedWallpaper() can bake them in.
+fun wallpaperScrims(color: Color): List<Brush> {
+    // Fading through transparent black would turn a white scrim grey
+    fun scrim(alpha: Float) = color.copy(alpha = alpha)
+    return listOf(
+        Brush.verticalGradient(0f to scrim(0.65f), 0.3f to scrim(0f)),
+        Brush.horizontalGradient(0f to scrim(0.6f), 0.6f to scrim(0f)),
+        Brush.verticalGradient(0.45f to scrim(0f), 1f to scrim(0.7f)),
+    )
+}
+
+// fade: 0 at the top of the page, 1 once scrolled far enough to fully dim and lift the photo. Read only in
+// graphicsLayer, so scrolling never re-records the photo.
+@Composable
+fun Wallpaper(state: WallpaperState, photoSize: IntSize, fade: () -> Float) {
+    val scrim = LocalColors.current.scrim
+    val scrims = remember(scrim) { wallpaperScrims(scrim) }
+    val height = with(LocalDensity.current) { photoSize.height.toDp() }
+    Box(Modifier.fillMaxSize()) {
+        Spacer(
+            Modifier
+                .fillMaxWidth()
+                .wrapContentHeight(Alignment.Top, unbounded = true)
+                .height(height)
+                .graphicsLayer { translationY = parallax(fade()) }
+                .drawBehind {
+                    val dst = IntSize(size.width.roundToInt(), size.height.roundToInt())
+                    state.outgoing?.let { drawImage(it.image, dstSize = dst) }
+                    state.shown?.let { drawImage(it.image, dstSize = dst, alpha = state.shownAlpha) }
+                    scrims.forEach { drawRect(it) }
+                }
+        )
+        Spacer(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = scrollScrim(fade())
+                    compositingStrategy = CompositingStrategy.ModulateAlpha
+                }
+                .background(scrim)
+        )
+    }
+}
+
+// The glass over Home: Wallpaper()'s layers again, from the frosted copies
+fun wallpaperGlass(state: WallpaperState, photoSize: IntSize, fade: () -> Float) = GlassSource { scope, origin, alpha, scrim ->
+    val f = fade()
+    val bounds = Rect(Offset(0f, scope.parallax(f)), photoSize.toSize())
+    scope.drawRect(scrim, alpha = alpha)
+    state.outgoing?.let { scope.drawGlassImage(it.frosted, bounds, origin, alpha) }
+    state.shown?.let { scope.drawGlassImage(it.frosted, bounds, origin, alpha * state.shownAlpha) }
+    scope.drawRect(scrim, alpha = alpha * scrollScrim(f))
+}
+
+private fun Density.parallax(fade: Float) = -ParallaxRange.toPx() * fade
+
+private fun scrollScrim(fade: Float) = SCROLLED_SCRIM * fade
+
+// The name gives way when space runs short; the credit, which the licence asks for, never does
+@Composable
+fun PhotoCredit(photo: Photo, modifier: Modifier = Modifier) {
+    val style = LocalTextStyle.current.copy(color = LocalColors.current.textSecondary, fontSize = 13.sp)
+    val credit = when {
+        photo.credit.isBlank() -> ""
+        photo.name.isBlank() -> photo.credit
+        else -> " · ${photo.credit}"
+    }
+    Layout(
+        content = {
+            Text(photo.name, style = style, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(credit, style = style, maxLines = 1, softWrap = false)
+        },
+        modifier = modifier,
+    ) { (name, tail), constraints ->
+        val loose = constraints.copy(minWidth = 0)
+        val tailPlaced = tail.measure(loose)
+        val namePlaced = name.measure(loose.copy(maxWidth = (loose.maxWidth - tailPlaced.width).coerceAtLeast(0)))
+        layout(namePlaced.width + tailPlaced.width, maxOf(namePlaced.height, tailPlaced.height)) {
+            namePlaced.place(0, 0)
+            tailPlaced.place(namePlaced.width, 0)
+        }
+    }
 }

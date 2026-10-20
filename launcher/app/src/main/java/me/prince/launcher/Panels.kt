@@ -54,7 +54,9 @@ internal fun GlassDialog(
                 Image(backdrop, contentDescription = null, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize())
             }
             Box(Modifier.fillMaxSize().background(LocalColors.current.scrim.copy(alpha = 0.35f)))
-            val source = remember(backdrop, bounds) { backdrop?.let { GlassSource(it, { bounds }) } }
+            val source = remember(backdrop, bounds) {
+                backdrop?.let { GlassSource { scope, origin, alpha, _ -> scope.drawGlassImage(it, bounds, origin, alpha) } }
+            }
             CompositionLocalProvider(LocalGlassSource provides source) {
                 content()
             }
@@ -110,3 +112,4 @@ internal fun AppGridPanel(
         }
     }
 }
+

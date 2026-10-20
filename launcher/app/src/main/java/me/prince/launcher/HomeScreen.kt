@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -134,7 +135,10 @@ private const val SPORTS_REFRESH_MS = 15 * 60_000L
 private const val SPORTS_RETRY_MS = 15_000L
 // The pinned bar fades in over this much scroll
 private val BarFadeDistance = 40.dp
+// The wallpaper dims and lifts over this much scroll
+private val WallpaperFadeDistance = 300.dp
 private val ScoreCardWidth = 240.dp
+private val CreditMaxWidth = 420.dp
 private val LiveRed = Color(0xFFFF453A)
 
 private data class MenuTarget(val app: TvApp, val canMove: Boolean, val backdrop: ImageBitmap?)
@@ -270,6 +274,27 @@ fun HomeScreen(
         }
     }
 
+    val prefs = remember { loadHomePrefs(context) }
+    val wallpaper = remember { WallpaperState() }
+    var photo by remember { mutableStateOf<Photo?>(null) }
+    LaunchedEffect(prefs) {
+        if (prefs.wallpaper == WallpaperStyle.Plain) return@LaunchedEffect
+        if (photo == null) photo = withContext(Dispatchers.IO) { savedWallpaper(context) }
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                val update = withContext(Dispatchers.IO) { updateWallpaper(context, prefs) }
+                update.photo?.let { photo = it }
+                delay(update.delayMs)
+            }
+        }
+    }
+    val photoSize = wallpaperSize()
+    LaunchedEffect(photo, photoSize) {
+        val shown = photo ?: return@LaunchedEffect
+        withContext(Dispatchers.Default) { loadWallpaperImage(context, shown, photoSize) }?.let { wallpaper.show(it) }
+    }
+    val photoUp by remember { derivedStateOf { prefs.wallpaper == WallpaperStyle.Photos && wallpaper.shown != null } }
+
     val now = rememberNow()
     var keyPresses by remember { mutableIntStateOf(0) }
     var idle by remember { mutableStateOf(false) }
@@ -310,6 +335,9 @@ fun HomeScreen(
     // Focused rows stop below the pinned bar instead of sliding under it
     val verticalScrollSpec = remember(edgeMargin, barHeight) { minimalScroll(edgeMargin, topInset = barHeight.toFloat()) }
     val barFadeDistance = with(density) { BarFadeDistance.toPx() }
+    val wallpaperFadeDistance = with(density) { WallpaperFadeDistance.toPx() }
+    val wallpaperFade = { (scroll.value / wallpaperFadeDistance).coerceIn(0f, 1f) }
+    val glass = remember(wallpaper, photoSize) { wallpaperGlass(wallpaper, photoSize, wallpaperFade) }
 
     MaterialTheme(colorScheme = darkColorScheme()) {
     LauncherTheme(light) {
@@ -338,7 +366,8 @@ fun HomeScreen(
                         if (dim > 0f) drawRect(Color.Black.copy(alpha = dim))
                     }
             ) {
-                Ambient { shownApp()?.glow }
+                if (photoUp) Wallpaper(wallpaper, photoSize, wallpaperFade) else Ambient { shownApp()?.glow }
+                CompositionLocalProvider(LocalGlassSource provides glass.takeIf { photoUp }) {
                 CompositionLocalProvider(LocalBringIntoViewSpec provides verticalScrollSpec) {
                 Column(
                     Modifier
@@ -350,7 +379,7 @@ fun HomeScreen(
                 CompositionLocalProvider(LocalBringIntoViewSpec provides rowScrollSpec) {
                     Spacer(Modifier.height(with(density) { barHeight.toDp() }))
                     Spacer(Modifier.height(118.dp))
-                    AppTitle({ shownApp()?.label.orEmpty() }, moving = movingId != null)
+                    AppTitle({ shownApp()?.label.orEmpty() }, { wallpaper.shown?.photo?.takeIf { photoUp } }, moving = movingId != null)
                     val onFocused = { app: TvApp -> focusedApp = app }
                     favourites.chunked(favouritesPerRow).forEachIndexed { row, rowApps ->
                         Shelf(
@@ -396,6 +425,7 @@ fun HomeScreen(
                         onPicture = onPicture,
                         onSound = onSound,
                     )
+                }
                 }
             }
 
@@ -493,9 +523,14 @@ private fun Ambient(glow: () -> Color?) {
 }
 
 @Composable
-private fun AppTitle(label: () -> String, moving: Boolean) {
+private fun AppTitle(label: () -> String, photo: () -> Photo?, moving: Boolean) {
     val colors = LocalColors.current
-    Row(Modifier.padding(horizontal = EdgePadding), verticalAlignment = Alignment.Bottom) {
+    val credit = photo().takeIf { !moving }
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = EdgePadding),
+        horizontalArrangement = if (credit != null) Arrangement.SpaceBetween else Arrangement.Start,
+        verticalAlignment = Alignment.Bottom,
+    ) {
         Text(
             text = label(),
             color = colors.textPrimary,
@@ -513,6 +548,17 @@ private fun AppTitle(label: () -> String, moving: Boolean) {
                 color = colors.textSecondary,
                 fontSize = 15.sp,
                 modifier = Modifier.padding(bottom = 10.dp),
+            )
+        }
+        // On glass, since the photo behind it can be any brightness
+        credit?.let {
+            PhotoCredit(
+                it,
+                Modifier
+                    .padding(start = 24.dp, bottom = 8.dp)
+                    .widthIn(max = CreditMaxWidth)
+                    .glass(CircleShape)
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
             )
         }
     }
@@ -691,7 +737,7 @@ private fun TopBar(
                 if (a == 0f) return@drawBehind
                 // Hide the sharp page underneath first
                 drawRect(colors.background, alpha = a)
-                source?.let { drawGlassSource(it, Offset.Zero, a) }
+                source?.draw(this, Offset.Zero, a, colors.scrim)
                 drawRect(colors.scrim, alpha = 0.25f * a)
                 drawRect(colors.glassFill, alpha = 0.66f * a)
                 val edge = 1.dp.toPx()

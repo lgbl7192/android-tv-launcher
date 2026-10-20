@@ -11,7 +11,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
@@ -19,9 +21,11 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.positionInRoot
@@ -31,15 +35,20 @@ import androidx.compose.ui.node.GlobalPositionAwareModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.node.currentValueOf
 import androidx.compose.ui.node.invalidateDraw
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
 // Android 11 has no real-time blur (RenderEffect is API 31), so glass samples a pre-blurred copy of
 // whatever is drawn behind it: the wallpaper on the home screen, a screen capture behind the menu.
-// Bounds and alpha are lambdas so scroll-driven parallax and fades are read while drawing, not composing.
-class GlassSource(val image: ImageBitmap, val bounds: () -> Rect, val alpha: () -> Float = { 1f })
+// Draws the part behind a surface whose top-left sits at origin (root coordinates). It runs while drawing,
+// so the scroll and fades it reads redraw the glass without recomposing it.
+fun interface GlassSource {
+    fun draw(scope: DrawScope, origin: Offset, alpha: Float, scrim: Color)
+}
 
 val LocalGlassSource = compositionLocalOf<GlassSource?> { null }
 
@@ -90,7 +99,7 @@ private class GlassNode(shape: Shape) :
             highlight = Brush.verticalGradient(0f to theme.glassHighlight, 0.5f to Color.Transparent)
             rim = Brush.linearGradient(theme.glassRim)
         }
-        currentValueOf(LocalGlassSource)?.let { drawGlassSource(it, origin) }
+        currentValueOf(LocalGlassSource)?.draw(this, origin, 1f, theme.scrim)
         drawRect(theme.glassFill)
         drawRect(highlight)
         drawContent()
@@ -105,18 +114,31 @@ private class GlassNode(shape: Shape) :
     }
 }
 
-// The part of the source behind a surface whose top-left sits at origin (root coordinates)
-fun DrawScope.drawGlassSource(source: GlassSource, origin: Offset, alpha: Float = 1f) {
-    val bounds = source.bounds()
-    translate(-origin.x, -origin.y) {
-        drawImage(
-            source.image,
-            dstOffset = IntOffset(bounds.left.roundToInt(), bounds.top.roundToInt()),
-            dstSize = IntSize(bounds.width.roundToInt(), bounds.height.roundToInt()),
-            alpha = alpha * source.alpha(),
-            filterQuality = FilterQuality.Low,
-        )
+// A blurred image stretched over bounds (root coordinates), seen from a surface whose top-left sits at origin,
+// clipped to the surface
+fun DrawScope.drawGlassImage(image: ImageBitmap, bounds: Rect, origin: Offset, alpha: Float) {
+    clipRect {
+        translate(-origin.x, -origin.y) {
+            drawImage(
+                image,
+                dstOffset = IntOffset(bounds.left.roundToInt(), bounds.top.roundToInt()),
+                dstSize = IntSize(bounds.width.roundToInt(), bounds.height.roundToInt()),
+                alpha = alpha,
+                filterQuality = FilterQuality.Low,
+            )
+        }
     }
+}
+
+// The wallpaper's glass copy: blurred, with Wallpaper()'s scrims cut out of its alpha. Drawn over the theme's
+// scrim colour it matches the screen in either theme, so a theme switch needs no new copy.
+fun frostedWallpaper(photo: Bitmap): ImageBitmap {
+    val (w, h, px) = blurredPixels(photo)
+    val image = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { setPixels(px, 0, w, 0, 0, w, h) }.asImageBitmap()
+    CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, Canvas(image), Size(w.toFloat(), h.toFloat())) {
+        wallpaperScrims(Color.Black).forEach { drawRect(it, blendMode = BlendMode.DstOut) }
+    }
+    return image
 }
 
 // Small blurred copy of the window, for the glass behind the long-press menu and the panels
