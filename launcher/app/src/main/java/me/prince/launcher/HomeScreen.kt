@@ -1,8 +1,5 @@
 package me.prince.launcher
 
-import androidx.compose.ui.graphics.ImageBitmap
-import android.app.Activity
-import android.view.Window
 import android.content.Intent
 import android.text.format.DateFormat
 import androidx.annotation.DrawableRes
@@ -109,12 +106,11 @@ import androidx.compose.ui.input.key.key
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.items
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -161,14 +157,11 @@ private const val SPORTS_RETRY_MS = 15_000L
 private val BarFadeDistance = 40.dp
 // The wallpaper dims and lifts over this much scroll
 private val WallpaperFadeDistance = 300.dp
-// Once the theme and photo fades have finished and drawn their last frame
-private val RECAPTURE_DELAY_MS = maxOf(THEME_FADE_MS, CROSSFADE_MS) + 200L
 private val ScoreCardWidth = 212.dp
 private val ScoreCardHeight = 84.dp
 private val LiveRed = Color(0xFFFF453A)
 
-private data class MenuTarget(val app: TvApp, val canMove: Boolean, val backdrop: ImageBitmap?)
-private data class OpenPanel(val panel: Panel, val backdrop: ImageBitmap?)
+private data class MenuTarget(val app: TvApp, val canMove: Boolean)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -192,15 +185,7 @@ fun HomeScreen(
     var inputs by remember { mutableStateOf(emptyList<TvApp>()) }
     var focusedApp by remember { mutableStateOf<TvApp?>(null) }
     var menu by remember { mutableStateOf<MenuTarget?>(null) }
-    var panel by remember { mutableStateOf<OpenPanel?>(null) }
-    val window = (context as Activity).window
-    // Capture and blur the screen first so menus and panels open over frosted glass
-    fun openMenu(app: TvApp, canMove: Boolean, from: Window = window) {
-        captureBlurredWindow(from) { menu = MenuTarget(app, canMove, it) }
-    }
-    fun openPanel(kind: Panel) {
-        captureBlurredWindow(window) { panel = OpenPanel(kind, it) }
-    }
+    var panel by remember { mutableStateOf<Panel?>(null) }
     var movingId by remember { mutableStateOf<String?>(null) }
     var swallowKeyUp by remember { mutableStateOf<Key?>(null) }
     var refocus by remember { mutableIntStateOf(0) }
@@ -366,7 +351,6 @@ fun HomeScreen(
     val barFadeDistance = with(density) { BarFadeDistance.toPx() }
     val wallpaperFadeDistance = with(density) { WallpaperFadeDistance.toPx() }
     val wallpaperFade = { (scroll.value / wallpaperFadeDistance).coerceIn(0f, 1f) }
-    val glass = remember(wallpaper, photoSize) { wallpaperGlass(wallpaper, photoSize, wallpaperFade) }
     MaterialTheme(colorScheme = darkColorScheme()) {
         LauncherTheme(light) {
             CompositionLocalProvider(
@@ -395,10 +379,7 @@ fun HomeScreen(
                         }
                 ) {
                     if (photoUp) Wallpaper(wallpaper, photoSize, wallpaperFade) else Ambient { shownApp()?.glow }
-                    CompositionLocalProvider(
-                        LocalGlassSource provides glass.takeIf { photoUp },
-                        LocalBringIntoViewSpec provides verticalScrollSpec,
-                    ) {
+                    CompositionLocalProvider(LocalBringIntoViewSpec provides verticalScrollSpec) {
                         Column(
                             Modifier
                                 .fillMaxSize()
@@ -419,7 +400,7 @@ fun HomeScreen(
                                     Column(Modifier.padding(bottom = DockBottomMargin)) {
                                         NowPlayingSlot()
                                         MoveHint(moving = movingId != null)
-                                        Dock(favourites, favouriteRow, firstTile, onLaunch, { openMenu(it, canMove = true) }, onFocused)
+                                        Dock(favourites, favouriteRow, firstTile, onLaunch, { menu = MenuTarget(it, canMove = true) }, onFocused)
                                     }
                                 }
                                 if (games.isNotEmpty()) {
@@ -428,23 +409,26 @@ fun HomeScreen(
                                 }
                                 if (recents.isNotEmpty()) {
                                     ShelfLabel("Recent")
-                                    Shelf(recents, rememberLazyListState(), null, onLaunch, { openMenu(it, canMove = false) }, onFocused)
+                                    Shelf(recents, rememberLazyListState(), null, onLaunch, { menu = MenuTarget(it, canMove = false) }, onFocused)
                                 }
                                 Spacer(Modifier.height(40.dp))
                             }
                         }
                         TopBar(
                             alpha = { (scroll.value / barFadeDistance).coerceIn(0f, 1f) },
+                            wallpaper = wallpaper.takeIf { photoUp },
+                            photoSize = photoSize,
+                            wallpaperFade = wallpaperFade,
                             shift = { shift },
                             onHeight = { barHeight = it },
                             below = page,
                         ) {
                             Header(
                                 clock = { now.value },
-                                onInputs = { openPanel(Panel.Inputs) }.takeIf { inputs.isNotEmpty() },
-                                onAllApps = { openPanel(Panel.AllApps) },
+                                onInputs = { panel = Panel.Inputs }.takeIf { inputs.isNotEmpty() },
+                                onAllApps = { panel = Panel.AllApps },
                                 allAppsFocus = firstTile.takeIf { favourites.isEmpty() },
-                                onHomeScreen = { openPanel(Panel.HomeScreen) },
+                                onHomeScreen = { panel = Panel.HomeScreen },
                                 onSettings = onSettings,
                                 onPicture = onPicture,
                                 onSound = onSound,
@@ -453,49 +437,38 @@ fun HomeScreen(
                     }
                 }
 
-                panel?.let { (kind, backdrop) ->
+                panel?.let { kind ->
                     val launchAndClose = { app: TvApp ->
                         onLaunch(app)
                         panel = null
                     }
                     when (kind) {
                         Panel.AllApps -> AppGridPanel(
-                            "All apps", apps, GridTileWidth, GridTileHeight, FavouriteTileShape, backdrop,
+                            "All apps", apps, GridTileWidth, GridTileHeight, FavouriteTileShape,
                             onLaunch = launchAndClose,
-                            onMenu = { app, from -> openMenu(app, canMove = false, from) },
+                            onMenu = { menu = MenuTarget(it, canMove = false) },
                             onDismiss = { panel = null },
                         )
                         Panel.Inputs -> AppGridPanel(
-                            "Inputs", inputs, TileWidth, TileHeight, TileShape, backdrop,
+                            "Inputs", inputs, TileWidth, TileHeight, TileShape,
                             onLaunch = launchAndClose,
-                            onMenu = { _, _ -> },
+                            onMenu = {},
                             onDismiss = { panel = null },
                         )
-                        Panel.HomeScreen -> {
-                            // The backdrop is a still capture, so take it again after the screen behind it changes
-                            LaunchedEffect(Unit) {
-                                snapshotFlow { Triple(light, photoUp, wallpaper.shown) }.drop(1).collectLatest {
-                                    delay(RECAPTURE_DELAY_MS)
-                                    captureBlurredWindow(window) { captured -> captured?.let { panel = panel?.copy(backdrop = it) } }
-                                }
-                            }
-                            HomeScreenPanel(
-                                prefs = prefs,
-                                daylight = daylight(location, now.value.toLocalDate(), ZoneId.systemDefault()),
-                                backdrop = backdrop,
-                                onChange = ::updatePrefs,
-                                onNextPhoto = { nextPhoto.trySend(Unit) },
-                                onDismiss = { panel = null },
-                            )
-                        }
+                        Panel.HomeScreen -> HomeScreenPanel(
+                            prefs = prefs,
+                            daylight = daylight(location, now.value.toLocalDate(), ZoneId.systemDefault()),
+                            onChange = ::updatePrefs,
+                            onNextPhoto = { nextPhoto.trySend(Unit) },
+                            onDismiss = { panel = null },
+                        )
                     }
                 }
 
-                menu?.let { (app, canMove, backdrop) ->
+                menu?.let { (app, canMove) ->
                     val isFavourite = app.packageName in favouriteIds
                     AppMenu(
                         app = app,
-                        backdrop = backdrop,
                         isFavourite = isFavourite,
                         canMove = canMove,
                         onDismiss = { menu = null },
@@ -600,11 +573,9 @@ private fun ShelfLabel(text: String) {
     )
 }
 
-// Opens over a blurred capture of the screen, like tvOS context menus
 @Composable
 private fun AppMenu(
     app: TvApp,
-    backdrop: ImageBitmap?,
     isFavourite: Boolean,
     canMove: Boolean,
     onDismiss: () -> Unit,
@@ -616,7 +587,7 @@ private fun AppMenu(
     LaunchedEffect(Unit) { firstItem.requestFocusWhenAttached() }
     // The menu opens while OK is still held; its repeats and release would click the first item
     var okArmed by remember { mutableStateOf(false) }
-    GlassDialog(backdrop, onDismiss, contentAlignment = Alignment.Center) {
+    ScrimDialog(onDismiss, contentAlignment = Alignment.Center) {
         Column(
             Modifier
                 .onPreviewKeyEvent {
@@ -625,7 +596,7 @@ private fun AppMenu(
                     !okArmed
                 }
                 .width(360.dp)
-                .glass(MenuShape)
+                .background(LocalColors.current.menuFill, MenuShape)
                 .padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -635,7 +606,7 @@ private fun AppMenu(
                 Text(app.label, color = LocalColors.current.textPrimary, fontSize = 20.sp, fontFamily = UiDisplay, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             val itemModifier = Modifier.fillMaxWidth()
-            // Milky like the menu card they sit on
+            // The same fill as the menu card they sit on
             if (canMove) Pill(null, "Move", onMove, itemModifier.focusRequester(firstItem), fillWidth = true, smoked = false)
             Pill(
                 null,
@@ -748,17 +719,19 @@ private fun Header(
     }
 }
 
-// Pinned over the page. Invisible at the top; once scrolled, frosted glass over whatever the glass source is.
-// Lambdas so scrolling only redraws the bar instead of recomposing it.
+// Pinned over the page. Invisible at the top; once scrolled, the wallpaper (if any) under a flat tint, hiding the
+// page behind it. Lambdas so scrolling only redraws the bar instead of recomposing it.
 @Composable
 private fun TopBar(
     alpha: () -> Float,
+    wallpaper: WallpaperState?,
+    photoSize: IntSize,
+    wallpaperFade: () -> Float,
     shift: () -> IntOffset,
     onHeight: (Int) -> Unit,
     below: FocusRequester,
     content: @Composable () -> Unit,
 ) {
-    val source = LocalGlassSource.current
     val colors = LocalColors.current
     Column(
         Modifier
@@ -773,13 +746,10 @@ private fun TopBar(
             .drawBehind {
                 val a = alpha()
                 if (a == 0f) return@drawBehind
-                // Hide the sharp page underneath first
                 drawRect(colors.background, alpha = a)
-                source?.draw(this, Offset.Zero, a, colors.scrim)
+                wallpaper?.let { drawWallpaper(it, photoSize, wallpaperFade(), colors.scrim, a) }
                 drawRect(colors.scrim, alpha = 0.25f * a)
-                drawRect(colors.glassFill, alpha = 0.66f * a)
-                val edge = 1.dp.toPx()
-                drawRect(colors.divider, topLeft = Offset(0f, size.height - edge), size = Size(size.width, edge), alpha = a)
+                drawRect(colors.surfaceFill, alpha = 0.66f * a)
             }
             .offset { shift() }
     ) {
@@ -795,7 +765,7 @@ private fun greeting(hour: Int): String = when (hour) {
     else -> "Good evening"
 }
 
-// Glass capsule; focused it turns solid white with dark content, like tvOS buttons
+// Translucent capsule; focused it turns solid white with dark content, like tvOS buttons
 @Composable
 internal fun Pill(
     @DrawableRes icon: Int?,
@@ -823,7 +793,7 @@ internal fun Pill(
         Row(
             Modifier
                 .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
-                .glass(CircleShape, enabled = !focused, smoked = smoked)
+                .background(if (focused) Color.Transparent else if (smoked) colors.smokeFill else colors.surfaceFill, CircleShape)
                 .padding(horizontal = if (label == null) 11.dp else 20.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -874,7 +844,7 @@ private fun Shelf(
     }
 }
 
-// Glass dock holding the favourites; the glass clips, so tiles scrolling past slide under its edge
+// Translucent dock holding the favourites; it clips, so tiles scrolling past slide under its edge
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun Dock(
@@ -892,7 +862,8 @@ private fun Dock(
         Modifier
             .padding(horizontal = DockMargin)
             .fillMaxWidth()
-            .glass(DockShape, smoked = true)
+            .clip(DockShape)
+            .background(LocalColors.current.smokeFill)
     ) {
         val tileWidth = (maxWidth - DockPadding * (DOCK_COLUMNS + 1)) / DOCK_COLUMNS
         val tileHeight = tileWidth * 9 / 16
@@ -935,7 +906,7 @@ internal fun AppTile(
         if (app.hasBanner) {
             Image(app.image, contentDescription = app.label, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         } else {
-            GlassTileContent(app, shape)
+            IconTileContent(app)
         }
     }
 }
@@ -1043,7 +1014,7 @@ private fun ScoreCard(game: Game) {
         else -> game.detail
     }
     val final = game.state == GameState.Final
-    Row(Modifier.fillMaxSize().glass(TileShape)) {
+    Row(Modifier.fillMaxSize().background(colors.surfaceFill)) {
         Box(
             Modifier
                 .padding(vertical = 14.dp)
@@ -1142,14 +1113,14 @@ private fun TeamSide(side: Side, logoFirst: Boolean, dim: Boolean) {
     }
 }
 
-// Inputs and apps without a TV banner: icon top-left, name and detail bottom-left on glass
+// Inputs and apps without a TV banner: icon top-left, name and detail bottom-left on a translucent fill
 @Composable
-private fun GlassTileContent(app: TvApp, shape: RoundedCornerShape) {
+private fun IconTileContent(app: TvApp) {
     val colors = LocalColors.current
     Column(
         Modifier
             .fillMaxSize()
-            .glass(shape)
+            .background(colors.surfaceFill)
             .padding(16.dp)
     ) {
         Image(app.image, contentDescription = null, modifier = Modifier.size(30.dp))

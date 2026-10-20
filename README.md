@@ -15,7 +15,7 @@ Written up end to end here: [How I Debloated My Android TV and Built My Own Laun
 
 ## Features
 
-- **Apple TV-style look.** Frosted glass buttons, rows that run off the screen edge, focus shown by a lift and a glow in the app's colour (no thick borders), and the [Inter](https://rsms.me/inter/) font in text and display sizes.
+- **Apple TV-style look.** See-through buttons and dock over a full-screen photo, rows that run off the screen edge, focus shown by a lift and a glow in the app's colour (no thick borders), and the [Inter](https://rsms.me/inter/) font in text and display sizes.
 - **Wallpapers.** Featured photos from [Wikimedia Commons](https://commons.wikimedia.org/) fill the screen: lakes, mountains, forests, coasts and night skies. A new photo fades in every 5 minutes, 15 minutes, hour or day, and its title, author and licence sit next to the app name. The next photo downloads ahead of time, so after a restart the last one is back at once, even offline. If you prefer, choose a plain background instead.
 - **Light by day, dark at night.** Auto switches at sunrise and sunset where the TV is. The TV works the times out from its location, with no network call. You can also keep it on Light or Dark.
 - **Live sports** (optional). A row of live, upcoming and recent games from ESPN's free scoreboard (no key), your teams first. Selecting a game opens the app that carries it (ESPN, Fox One, Peacock, Paramount+, HBO Max, Prime Video, Apple TV…). It only refreshes while the home screen is showing: every minute during live games, otherwise every 15 minutes.

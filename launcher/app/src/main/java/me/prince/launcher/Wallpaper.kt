@@ -22,8 +22,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -33,6 +31,9 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -40,7 +41,6 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toSize
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -358,15 +358,14 @@ private fun photoFrom(json: JSONObject): Photo? {
     return Photo(title, url, json.optString("name"), json.optString("artist"), json.optString("license"))
 }
 
-class WallpaperImage(val photo: Photo, val image: ImageBitmap, val frosted: ImageBitmap)
+class WallpaperImage(val photo: Photo, val image: ImageBitmap)
 
 // Blocking; null if the photo has since been replaced on disk
 fun loadWallpaperImage(context: Context, photo: Photo, size: IntSize): WallpaperImage? {
     val bitmap = decodeWallpaper(context, photo, size.width, size.height) ?: return null
     cutScrims(bitmap)
-    val frosted = frostedWallpaper(bitmap)
     bitmap.prepareToDraw()
-    return WallpaperImage(photo, bitmap.asImageBitmap(), frosted)
+    return WallpaperImage(photo, bitmap.asImageBitmap())
 }
 
 @Stable
@@ -403,7 +402,7 @@ fun wallpaperSize(): IntSize {
 
 // Cuts the scrims behind the header, the title and the shelves out of the photo's alpha. Drawn over the theme's
 // scrim colour it matches scrims drawn on top, in either theme, for one flat fill a frame instead of three
-// gradients. In the photo's coordinates, so they parallax with it and the frosted copy has them too.
+// gradients. In the photo's coordinates, so they parallax with it.
 private fun cutScrims(photo: Bitmap) {
     val image = photo.asImageBitmap()
     CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, Canvas(image), Size(photo.width.toFloat(), photo.height.toFloat())) {
@@ -447,14 +446,17 @@ fun Wallpaper(state: WallpaperState, photoSize: IntSize, fade: () -> Float) {
     }
 }
 
-// The glass over Home: Wallpaper()'s layers again, from the frosted copies
-fun wallpaperGlass(state: WallpaperState, photoSize: IntSize, fade: () -> Float) = GlassSource { scope, origin, alpha, scrim ->
-    val f = fade()
-    val bounds = Rect(Offset(0f, scope.parallax(f)), photoSize.toSize())
-    scope.drawRect(scrim, alpha = alpha)
-    state.outgoing?.let { scope.drawGlassImage(it.frosted, bounds, origin, alpha) }
-    state.shown?.let { scope.drawGlassImage(it.frosted, bounds, origin, alpha * state.shownAlpha) }
-    scope.drawRect(scrim, alpha = alpha * scrollScrim(f))
+// Wallpaper()'s layers again, clipped to a surface at the top-left of the screen, for the pinned bar to hide the
+// page scrolling under it
+fun DrawScope.drawWallpaper(state: WallpaperState, photoSize: IntSize, fade: Float, scrim: Color, alpha: Float) {
+    drawRect(scrim, alpha = alpha)
+    clipRect {
+        translate(top = parallax(fade)) {
+            state.outgoing?.let { drawImage(it.image, dstSize = photoSize, alpha = alpha) }
+            state.shown?.let { drawImage(it.image, dstSize = photoSize, alpha = alpha * state.shownAlpha) }
+        }
+    }
+    drawRect(scrim, alpha = alpha * scrollScrim(fade))
 }
 
 private fun Density.parallax(fade: Float) = -ParallaxRange.toPx() * fade

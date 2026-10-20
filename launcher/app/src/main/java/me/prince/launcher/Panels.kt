@@ -1,13 +1,10 @@
 package me.prince.launcher
 
 import android.text.format.DateFormat
-import android.view.Window
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -20,18 +17,14 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -48,32 +41,25 @@ enum class Panel { AllApps, Inputs, HomeScreen }
 // Narrow enough for all five categories, ticked, on one line
 private val SettingLabelWidth = 140.dp
 
-// Full screen over a blurred capture of what was behind it, which also feeds the glass inside. Back dismisses.
+// Full screen over the live screen behind it, dimmed in the theme's scrim colour. Back dismisses.
 @Composable
-internal fun GlassDialog(
-    backdrop: ImageBitmap?,
+internal fun ScrimDialog(
     onDismiss: () -> Unit,
     contentAlignment: Alignment = Alignment.TopStart,
     content: @Composable BoxScope.() -> Unit,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = contentAlignment) {
-            val bounds = with(LocalDensity.current) { Rect(0f, 0f, maxWidth.toPx(), maxHeight.toPx()) }
-            if (backdrop != null) {
-                Image(backdrop, contentDescription = null, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize())
-            }
-            Box(Modifier.fillMaxSize().background(LocalColors.current.scrim.copy(alpha = 0.35f)))
-            val source = remember(backdrop, bounds) {
-                backdrop?.let { GlassSource { scope, origin, alpha, _ -> scope.drawGlassImage(it, bounds, origin, alpha) } }
-            }
-            CompositionLocalProvider(LocalGlassSource provides source) {
-                content()
-            }
-        }
+        // The theme's scrim does the dimming, so it's light by day rather than the platform's grey
+        val window = (LocalView.current.parent as DialogWindowProvider).window
+        SideEffect { window.setDimAmount(0f) }
+        Box(
+            Modifier.fillMaxSize().background(LocalColors.current.scrim.copy(alpha = 0.88f)),
+            contentAlignment = contentAlignment,
+            content = content,
+        )
     }
 }
 
-// The long-press menu opens over this panel, so it gets the panel's own window to capture
 @Composable
 internal fun AppGridPanel(
     title: String,
@@ -81,15 +67,13 @@ internal fun AppGridPanel(
     tileWidth: Dp,
     tileHeight: Dp,
     shape: RoundedCornerShape,
-    backdrop: ImageBitmap?,
     onLaunch: (TvApp) -> Unit,
-    onMenu: (TvApp, Window) -> Unit,
+    onMenu: (TvApp) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val firstTile = remember { FocusRequester() }
     LaunchedEffect(Unit) { firstTile.requestFocusWhenAttached() }
-    GlassDialog(backdrop, onDismiss) {
-        val window = (LocalView.current.parent as DialogWindowProvider).window
+    ScrimDialog(onDismiss) {
         Column(Modifier.fillMaxSize().padding(top = 48.dp)) {
             Text(
                 title,
@@ -110,7 +94,7 @@ internal fun AppGridPanel(
                     AppTile(
                         app = app,
                         onClick = { onLaunch(app) },
-                        onLongClick = { onMenu(app, window) },
+                        onLongClick = { onMenu(app) },
                         width = tileWidth,
                         height = tileHeight,
                         shape = shape,
@@ -126,7 +110,6 @@ internal fun AppGridPanel(
 internal fun HomeScreenPanel(
     prefs: HomePrefs,
     daylight: Daylight,
-    backdrop: ImageBitmap?,
     onChange: (HomePrefs) -> Unit,
     onNextPhoto: () -> Unit,
     onDismiss: () -> Unit,
@@ -135,7 +118,7 @@ internal fun HomeScreenPanel(
     val selectedAppearance = remember { FocusRequester() }
     LaunchedEffect(Unit) { selectedAppearance.requestFocusWhenAttached() }
     val is24h = DateFormat.is24HourFormat(LocalContext.current)
-    GlassDialog(backdrop, onDismiss) {
+    ScrimDialog(onDismiss) {
         Column(
             Modifier.fillMaxSize().padding(top = 48.dp).padding(horizontal = EdgePadding),
             verticalArrangement = Arrangement.spacedBy(20.dp),

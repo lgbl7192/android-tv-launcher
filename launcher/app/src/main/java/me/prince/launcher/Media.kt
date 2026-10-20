@@ -195,7 +195,7 @@ fun NowPlayingCard(media: NowPlaying, modifier: Modifier = Modifier) {
     Row(
         modifier
             .width(NowPlayingWidth)
-            .glass(CardShape, smoked = true)
+            .background(colors.smokeFill, CardShape)
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
