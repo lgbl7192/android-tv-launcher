@@ -67,9 +67,11 @@ private val LightColors = LauncherColors(
 
 val LocalColors = compositionLocalOf { DarkColors }
 
+internal const val THEME_FADE_MS = 1000
+
 @Composable
 fun LauncherTheme(light: Boolean, content: @Composable () -> Unit) {
-    val progress by animateFloatAsState(if (light) 1f else 0f, tween(1000), label = "theme")
+    val progress by animateFloatAsState(if (light) 1f else 0f, tween(THEME_FADE_MS), label = "theme")
     val colors = remember(progress) { lerp(DarkColors, LightColors, progress) }
     CompositionLocalProvider(LocalColors provides colors, content = content)
 }

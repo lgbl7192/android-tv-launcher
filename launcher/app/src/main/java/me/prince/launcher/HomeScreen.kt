@@ -94,8 +94,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.geometry.Size
@@ -137,6 +140,8 @@ private const val SPORTS_RETRY_MS = 15_000L
 private val BarFadeDistance = 40.dp
 // The wallpaper dims and lifts over this much scroll
 private val WallpaperFadeDistance = 300.dp
+// Once the theme and photo fades have finished and drawn their last frame
+private val RECAPTURE_DELAY_MS = maxOf(THEME_FADE_MS, CROSSFADE_MS) + 200L
 private val ScoreCardWidth = 240.dp
 private val CreditMaxWidth = 420.dp
 private val LiveRed = Color(0xFFFF453A)
@@ -273,17 +278,23 @@ fun HomeScreen(
         }
     }
 
-    val prefs = remember { loadHomePrefs(context) }
+    var prefs by remember { mutableStateOf(loadHomePrefs(context)) }
+    fun updatePrefs(changed: HomePrefs) {
+        prefs = changed
+        saveHomePrefs(context, changed)
+    }
     val wallpaper = remember { WallpaperState() }
+    val nextPhoto = remember { Channel<Unit>(Channel.CONFLATED) }
     var photo by remember { mutableStateOf<Photo?>(null) }
     LaunchedEffect(prefs) {
         if (prefs.wallpaper == WallpaperStyle.Plain) return@LaunchedEffect
         if (photo == null) photo = withContext(Dispatchers.IO) { savedWallpaper(context) }
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            var skip = false
             while (true) {
-                val update = withContext(Dispatchers.IO) { updateWallpaper(context, prefs) }
+                val update = withContext(Dispatchers.IO) { updateWallpaper(context, prefs, skip) }
                 update.photo?.let { photo = it }
-                delay(update.delayMs)
+                skip = withTimeoutOrNull(update.delayMs) { nextPhoto.receive() } != null
             }
         }
     }
@@ -425,6 +436,7 @@ fun HomeScreen(
                         onInputs = { openPanel(Panel.Inputs) }.takeIf { inputs.isNotEmpty() },
                         onAllApps = { openPanel(Panel.AllApps) },
                         allAppsFocus = firstTile.takeIf { favourites.isEmpty() },
+                        onHomeScreen = { openPanel(Panel.HomeScreen) },
                         onSettings = onSettings,
                         onPicture = onPicture,
                         onSound = onSound,
@@ -451,6 +463,24 @@ fun HomeScreen(
                         onMenu = { _, _ -> },
                         onDismiss = { panel = null },
                     )
+                    Panel.HomeScreen -> {
+                        // The backdrop is a still capture, so take it again after the screen behind it changes
+                        LaunchedEffect(Unit) {
+                            snapshotFlow { Triple(light, photoUp, wallpaper.shown) }.drop(1).collectLatest {
+                                delay(RECAPTURE_DELAY_MS)
+                                captureBlurredWindow(window) { captured -> captured?.let { panel = panel?.copy(backdrop = it) } }
+                            }
+                        }
+                        HomeScreenPanel(
+                            prefs = prefs,
+                            daylight = daylight(location, now.value.toLocalDate(), ZoneId.systemDefault()),
+                            photo = wallpaper.shown?.photo?.takeIf { photoUp },
+                            backdrop = backdrop,
+                            onChange = ::updatePrefs,
+                            onNextPhoto = { nextPhoto.trySend(Unit) },
+                            onDismiss = { panel = null },
+                        )
+                    }
                 }
             }
 
@@ -651,6 +681,7 @@ private fun Header(
     onInputs: (() -> Unit)?,
     onAllApps: () -> Unit,
     allAppsFocus: FocusRequester?,
+    onHomeScreen: () -> Unit,
     onSettings: () -> Unit,
     onPicture: (() -> Unit)?,
     onSound: (() -> Unit)?,
@@ -707,6 +738,7 @@ private fun Header(
                 onAllApps,
                 if (allAppsFocus != null) Modifier.focusRequester(allAppsFocus) else Modifier,
             )
+            Pill(R.drawable.ic_wallpaper, null, onHomeScreen)
             onPicture?.let { Pill(R.drawable.ic_picture, null, it) }
             onSound?.let { Pill(R.drawable.ic_sound, null, it) }
             Pill(R.drawable.ic_settings, "Settings", onSettings)
@@ -796,7 +828,7 @@ internal fun Pill(
                 Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(18.dp))
             }
             if (icon != null && label != null) Spacer(Modifier.width(8.dp))
-            if (label != null) Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            if (label != null) Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
         }
     }
 }
