@@ -53,7 +53,6 @@ class MainActivity : ComponentActivity() {
                 reloadKey = reloadKey,
                 homePresses = homePresses,
                 resumes = resumes,
-                light = false,
                 onLaunch = { if (it.isInput) launchFresh(it.launchIntent) else launch(it.launchIntent) },
                 onAppInfo = { app ->
                     launch(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${app.packageName}")))

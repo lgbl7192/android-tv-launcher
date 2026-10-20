@@ -150,7 +150,6 @@ fun HomeScreen(
     reloadKey: Int,
     homePresses: Int,
     resumes: Int,
-    light: Boolean,
     onLaunch: (TvApp) -> Unit,
     onAppInfo: (TvApp) -> Unit,
     onSettings: () -> Unit,
@@ -296,6 +295,11 @@ fun HomeScreen(
     val photoUp by remember { derivedStateOf { prefs.wallpaper == WallpaperStyle.Photos && wallpaper.shown != null } }
 
     val now = rememberNow()
+    var location by remember { mutableStateOf(lastLocation(context)) }
+    LaunchedEffect(resumes) { location = withContext(Dispatchers.IO) { lastLocation(context) } }
+    val light by remember {
+        derivedStateOf { isLight(prefs.appearance, location, now.value.atZone(ZoneId.systemDefault())) }
+    }
     var keyPresses by remember { mutableIntStateOf(0) }
     var idle by remember { mutableStateOf(false) }
     LaunchedEffect(resumes) {
@@ -512,12 +516,12 @@ private fun Ambient(glow: () -> Color?) {
                     Brush.radialGradient(
                         0f to color.copy(alpha = 0.9f * colors.glowStrength),
                         0.45f to color.copy(alpha = 0.3f * colors.glowStrength),
-                        1f to Color.Transparent,
+                        1f to color.copy(alpha = 0f),
                         center = Offset(size.width * 0.36f, size.height * 0.42f),
                         radius = size.width * 0.6f,
                     )
                 )
-                drawRect(Brush.verticalGradient(listOf(Color.Transparent, colors.scrim.copy(alpha = 0.55f))))
+                drawRect(Brush.verticalGradient(listOf(colors.scrim.copy(alpha = 0f), colors.scrim.copy(alpha = 0.55f))))
             }
     )
 }
