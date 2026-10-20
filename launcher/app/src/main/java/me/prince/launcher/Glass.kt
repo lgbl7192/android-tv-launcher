@@ -6,34 +6,44 @@ import android.os.Looper
 import android.view.PixelCopy
 import android.view.Window
 import androidx.compose.runtime.compositionLocalOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.foundation.border
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
+import androidx.compose.ui.node.DrawModifierNode
+import androidx.compose.ui.node.GlobalPositionAwareModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.currentValueOf
+import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
 // Android 11 has no real-time blur (RenderEffect is API 31), so glass samples a pre-blurred copy of
-// whatever is drawn behind it: the trending backdrop on the home screen, a screen capture behind the menu.
-class GlassSource(val image: ImageBitmap, val bounds: Rect, val alpha: Float = 1f)
+// whatever is drawn behind it: the wallpaper on the home screen, a screen capture behind the menu.
+// Draws the part behind a surface whose top-left sits at origin (root coordinates). It runs while drawing,
+// so the scroll and fades it reads redraw the glass without recomposing it.
+fun interface GlassSource {
+    fun draw(scope: DrawScope, origin: Offset, alpha: Float, scrim: Color)
+}
 
 val LocalGlassSource = compositionLocalOf<GlassSource?> { null }
 
@@ -43,61 +53,86 @@ private const val BLUR_PASSES = 3
 
 // Frosted surface: blurred backdrop lined up with what's behind it, a milky lift, a specular top
 // highlight and a light rim that's brighter at the top-left, like light catching the edge.
-fun Modifier.glass(shape: Shape, enabled: Boolean = true): Modifier = composed {
-    val source = LocalGlassSource.current
-    var origin by remember { mutableStateOf(Offset.Zero) }
-    if (!enabled) return@composed this
-    this
-        .onGloballyPositioned { origin = it.positionInRoot() }
-        .clip(shape)
-        .drawBehind {
-            if (source != null) {
-                translate(-origin.x, -origin.y) {
-                    drawImage(
-                        source.image,
-                        dstOffset = IntOffset(source.bounds.left.roundToInt(), source.bounds.top.roundToInt()),
-                        dstSize = IntSize(source.bounds.width.roundToInt(), source.bounds.height.roundToInt()),
-                        alpha = source.alpha,
-                        filterQuality = FilterQuality.Low,
-                    )
-                }
-            }
-            drawRect(Color.White.copy(alpha = 0.09f))
-            drawRect(Brush.verticalGradient(0f to Color.White.copy(alpha = 0.16f), 0.5f to Color.Transparent))
-        }
-        .border(
-            1.dp,
-            Brush.linearGradient(
-                listOf(Color.White.copy(alpha = 0.5f), Color.White.copy(alpha = 0.08f), Color.White.copy(alpha = 0.22f)),
-            ),
-            shape,
-        )
+fun Modifier.glass(shape: Shape, enabled: Boolean = true): Modifier =
+    if (enabled) clip(shape).then(GlassElement(shape)) else this
+
+private data class GlassElement(val shape: Shape) : ModifierNodeElement<GlassNode>() {
+    override fun create() = GlassNode(shape)
+
+    override fun update(node: GlassNode) {
+        node.shape = shape
+    }
 }
 
-// The trending backdrop as it actually appears on screen, blurred. Mirrors the masks in Backdrop(): the top
-// is darkened, the left and bottom fade out to transparent (so the glow behind the shelves shows through the
-// glass just as it does around it). Assumes a 16:9 screen with the backdrop covering the top 72%.
-fun frostedBackdrop(backdrop: Bitmap, heightFraction: Float): ImageBitmap {
-    val small = blurredPixels(backdrop)
-    val (w, h, px) = small
-    for (y in 0 until h) {
-        val v = y / (h * heightFraction)
-        val bottomFade = if (v < 0.5f) 1f else (1f - (v - 0.5f) / 0.5f).coerceIn(0f, 1f)
-        val topDarken = 1f - 0.5f * (1f - v / 0.25f).coerceIn(0f, 1f)
-        for (x in 0 until w) {
-            val leftFade = 0.2f + 0.8f * (x / (w * 0.6f)).coerceAtMost(1f)
-            val a = (255 * bottomFade * leftFade).toInt()
-            val p = px[y * w + x]
-            val r = (((p shr 16) and 0xFF) * topDarken).toInt()
-            val g = (((p shr 8) and 0xFF) * topDarken).toInt()
-            val b = ((p and 0xFF) * topDarken).toInt()
-            px[y * w + x] = (a shl 24) or (r shl 16) or (g shl 8) or b
+private class GlassNode(shape: Shape) :
+    Modifier.Node(), DrawModifierNode, GlobalPositionAwareModifierNode, CompositionLocalConsumerModifierNode {
+    var shape = shape
+        set(value) {
+            field = value
+            outline = null
+            invalidateDraw()
+        }
+    private var origin = Offset.Zero
+    private var outline: Outline? = null
+    private var outlineSize = Size.Unspecified
+    private var colors: LauncherColors? = null
+    private lateinit var highlight: Brush
+    private lateinit var rim: Brush
+
+    override fun onGloballyPositioned(coordinates: LayoutCoordinates) {
+        val position = coordinates.positionInRoot()
+        if (position == origin) return
+        origin = position
+        // Without a source nothing behind the glass shifts when it moves
+        if (currentValueOf(LocalGlassSource) != null) invalidateDraw()
+    }
+
+    override fun ContentDrawScope.draw() {
+        val theme = currentValueOf(LocalColors)
+        if (theme !== colors) {
+            colors = theme
+            highlight = Brush.verticalGradient(0f to theme.glassHighlight, 0.5f to Color.Transparent)
+            rim = Brush.linearGradient(theme.glassRim)
+        }
+        currentValueOf(LocalGlassSource)?.draw(this, origin, 1f, theme.scrim)
+        drawRect(theme.glassFill)
+        drawRect(highlight)
+        drawContent()
+        // Inset by half the stroke so the clip doesn't cut the rim in half
+        val stroke = 1.dp.toPx()
+        val edge = outline.takeIf { outlineSize == size }
+            ?: shape.createOutline(Size(size.width - stroke, size.height - stroke), layoutDirection, this).also {
+                outline = it
+                outlineSize = size
+            }
+        translate(stroke / 2, stroke / 2) { drawOutline(edge, rim, style = Stroke(stroke)) }
+    }
+}
+
+// A blurred image stretched over bounds (root coordinates), seen from a surface whose top-left sits at origin,
+// clipped to the surface
+fun DrawScope.drawGlassImage(image: ImageBitmap, bounds: Rect, origin: Offset, alpha: Float) {
+    clipRect {
+        translate(-origin.x, -origin.y) {
+            drawImage(
+                image,
+                dstOffset = IntOffset(bounds.left.roundToInt(), bounds.top.roundToInt()),
+                dstSize = IntSize(bounds.width.roundToInt(), bounds.height.roundToInt()),
+                alpha = alpha,
+                filterQuality = FilterQuality.Low,
+            )
         }
     }
+}
+
+// The wallpaper's glass copy, scrims and all. Like the photo, it goes over the theme's scrim colour, so a theme
+// switch needs no new copy.
+fun frostedWallpaper(photo: Bitmap): ImageBitmap {
+    val (w, h, px) = blurredPixels(photo)
     return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888).asImageBitmap()
 }
 
-// Small blurred copy of the window, for the glass behind the long-press menu
+// Small blurred copy of the window, for the glass behind the long-press menu and the panels
 fun captureBlurredWindow(window: Window, onReady: (ImageBitmap?) -> Unit) {
     val view = window.decorView
     val target = Bitmap.createBitmap(BLUR_WIDTH, BLUR_WIDTH * view.height / view.width, Bitmap.Config.ARGB_8888)

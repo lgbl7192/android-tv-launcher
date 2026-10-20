@@ -57,12 +57,9 @@ class MainActivity : ComponentActivity() {
                 onAppInfo = { app ->
                     launch(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${app.packageName}")))
                 },
-                onWifi = { launch(Intent(Settings.ACTION_WIFI_SETTINGS)) },
                 onSettings = { launch(Intent(Settings.ACTION_SETTINGS)) },
                 onPicture = picture?.let { { launch(it) } },
                 onSound = sound?.let { { launch(it) } },
-                // Stremio title links only work on a cold start; plain app launches don't need that
-                onOpenTrending = { if (it.data != null) launchFresh(it) else launch(it) },
                 onOpenGame = { launch(it) },
             )
         }
@@ -106,7 +103,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Live TV apps (HDMI inputs) and Nuvio/Stremio (title links) can ignore the link if they're already running,
+    // Live TV apps (HDMI inputs) can ignore the input they're sent to if they're already running,
     // so close the target's background process first. It's always in the background while we're Home.
     private fun launchFresh(intent: Intent) {
         packageManager.resolveActivity(intent, 0)?.activityInfo?.packageName?.let {

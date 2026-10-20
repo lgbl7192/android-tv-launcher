@@ -14,14 +14,20 @@ private val FAHRENHEIT_COUNTRIES = setOf("US", "LR", "MM", "BS", "BZ", "KY", "PW
 
 data class Weather(val temperature: Int, val summary: String)
 
-// Uses the TV's network location (coarse location is already granted for the Wi-Fi name) and Open-Meteo, which needs no key
+data class LatLon(val latitude: Double, val longitude: Double)
+
+// The TV's last network fix; null without ACCESS_COARSE_LOCATION or before the TV has located itself
+fun lastLocation(context: Context): LatLon? = try {
+    context.getSystemService(LocationManager::class.java)
+        .getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+        ?.let { LatLon(it.latitude, it.longitude) }
+} catch (e: SecurityException) {
+    Log.w(TAG, "No location permission", e)
+    null
+}
+
 fun fetchWeather(context: Context): Weather? {
-    val location = try {
-        context.getSystemService(LocationManager::class.java).getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-    } catch (e: SecurityException) {
-        Log.w(TAG, "No location permission", e)
-        null
-    } ?: return null
+    val location = lastLocation(context) ?: return null
     val unit = if (Locale.getDefault().country in FAHRENHEIT_COUNTRIES) "fahrenheit" else "celsius"
     val url = String.format(
         Locale.US,
