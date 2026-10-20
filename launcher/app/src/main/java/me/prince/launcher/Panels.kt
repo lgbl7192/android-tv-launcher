@@ -126,7 +126,6 @@ internal fun AppGridPanel(
 internal fun HomeScreenPanel(
     prefs: HomePrefs,
     daylight: Daylight,
-    photo: Photo?,
     backdrop: ImageBitmap?,
     onChange: (HomePrefs) -> Unit,
     onNextPhoto: () -> Unit,
@@ -181,7 +180,6 @@ internal fun HomeScreenPanel(
                 }
                 Setting("") {
                     Pill(null, "Next photo", onNextPhoto)
-                    photo?.let { PhotoCredit(it, Modifier.padding(start = 8.dp)) }
                 }
             }
         }

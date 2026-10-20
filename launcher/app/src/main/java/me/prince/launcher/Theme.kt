@@ -30,6 +30,13 @@ data class LauncherColors(
     val focusGlow: Color,
     // Scales the focused app's colour glowing behind the shelves
     val glowStrength: Float,
+    // Smoked glass for the pills, dock and now-playing card: the backdrop darkened rather than lifted, the same in both themes
+    val smokeFill: Color = Color.Black.copy(alpha = 0.34f),
+    val smokeHighlight: Color = Color.White.copy(alpha = 0.06f),
+    val smokeRim: List<Color> = listOf(Color.White.copy(alpha = 0.32f), Color.White.copy(alpha = 0.06f), Color.White.copy(alpha = 0.16f)),
+    val smokeScrim: Color = Color.Black,
+    val onSmoke: Color = Color.White,
+    val onSmokeSecondary: Color = Color.White.copy(alpha = 0.7f),
 )
 
 // Pure black switches OLED pixels off entirely
@@ -92,5 +99,11 @@ private fun lerp(a: LauncherColors, b: LauncherColors, t: Float): LauncherColors
         tileBorderFocused = lerp(a.tileBorderFocused, b.tileBorderFocused, t),
         focusGlow = lerp(a.focusGlow, b.focusGlow, t),
         glowStrength = lerp(a.glowStrength, b.glowStrength, t),
+        smokeFill = lerp(a.smokeFill, b.smokeFill, t),
+        smokeHighlight = lerp(a.smokeHighlight, b.smokeHighlight, t),
+        smokeRim = a.smokeRim.zip(b.smokeRim) { x, y -> lerp(x, y, t) },
+        smokeScrim = lerp(a.smokeScrim, b.smokeScrim, t),
+        onSmoke = lerp(a.onSmoke, b.onSmoke, t),
+        onSmokeSecondary = lerp(a.onSmokeSecondary, b.onSmokeSecondary, t),
     )
 }

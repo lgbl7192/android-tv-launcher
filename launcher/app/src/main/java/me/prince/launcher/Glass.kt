@@ -53,23 +53,32 @@ private const val BLUR_PASSES = 3
 
 // Frosted surface: blurred backdrop lined up with what's behind it, a milky lift, a specular top
 // highlight and a light rim that's brighter at the top-left, like light catching the edge.
-fun Modifier.glass(shape: Shape, enabled: Boolean = true): Modifier =
-    if (enabled) clip(shape).then(GlassElement(shape)) else this
+// Smoked darkens the backdrop instead of lifting it, in either theme; content on it uses onSmoke.
+fun Modifier.glass(shape: Shape, enabled: Boolean = true, smoked: Boolean = false): Modifier =
+    if (enabled) clip(shape).then(GlassElement(shape, smoked)) else this
 
-private data class GlassElement(val shape: Shape) : ModifierNodeElement<GlassNode>() {
-    override fun create() = GlassNode(shape)
+private data class GlassElement(val shape: Shape, val smoked: Boolean) : ModifierNodeElement<GlassNode>() {
+    override fun create() = GlassNode(shape, smoked)
 
     override fun update(node: GlassNode) {
         node.shape = shape
+        node.smoked = smoked
     }
 }
 
-private class GlassNode(shape: Shape) :
+private class GlassNode(shape: Shape, smoked: Boolean) :
     Modifier.Node(), DrawModifierNode, GlobalPositionAwareModifierNode, CompositionLocalConsumerModifierNode {
     var shape = shape
         set(value) {
             field = value
             outline = null
+            invalidateDraw()
+        }
+    var smoked = smoked
+        set(value) {
+            if (field == value) return
+            field = value
+            colors = null
             invalidateDraw()
         }
     private var origin = Offset.Zero
@@ -91,11 +100,11 @@ private class GlassNode(shape: Shape) :
         val theme = currentValueOf(LocalColors)
         if (theme !== colors) {
             colors = theme
-            highlight = Brush.verticalGradient(0f to theme.glassHighlight, 0.5f to Color.Transparent)
-            rim = Brush.linearGradient(theme.glassRim)
+            highlight = Brush.verticalGradient(0f to if (smoked) theme.smokeHighlight else theme.glassHighlight, 0.5f to Color.Transparent)
+            rim = Brush.linearGradient(if (smoked) theme.smokeRim else theme.glassRim)
         }
-        currentValueOf(LocalGlassSource)?.draw(this, origin, 1f, theme.scrim)
-        drawRect(theme.glassFill)
+        currentValueOf(LocalGlassSource)?.draw(this, origin, 1f, if (smoked) theme.smokeScrim else theme.scrim)
+        drawRect(if (smoked) theme.smokeFill else theme.glassFill)
         drawRect(highlight)
         drawContent()
         // Inset by half the stroke so the clip doesn't cut the rim in half

@@ -128,6 +128,7 @@ S=<tv-ip>:5555                    # or <tv-ip>:<port> if you used Wireless debug
 adb -s $S install -r app/build/outputs/apk/release/app-release.apk
 adb -s $S shell pm grant me.prince.launcher android.permission.ACCESS_COARSE_LOCATION   # weather, sunrise and sunset
 adb -s $S shell appops set me.prince.launcher GET_USAGE_STATS allow                       # Recent row
+adb -s $S shell cmd notification allow_listener me.prince.launcher/me.prince.launcher.MediaListener  # Now-playing card
 adb -s $S shell cmd package compile -m speed -f me.prince.launcher                       # faster cold start
 adb -s $S shell am start -n me.prince.launcher/.MainActivity                             # try it first
 ```

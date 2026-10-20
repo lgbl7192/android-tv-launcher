@@ -34,18 +34,13 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
-import androidx.tv.material3.LocalTextStyle
-import androidx.tv.material3.Text
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -58,12 +53,18 @@ import kotlin.random.Random
 private const val TAG = "Wallpaper"
 private const val API = "https://commons.wikimedia.org/w/api.php"
 private const val MIN_WIDTH = 1920
+// A 1080p screen plus the parallax strip; photos wider than MIN_WIDTH x MIN_HEIGHT get the LARGE_WIDTH thumbnail
+// so the crop still covers it. Commons only serves standard thumbnail widths, and nothing between these two.
+private const val MIN_HEIGHT = 1200
+private const val LARGE_WIDTH = 3840
 // Landscape, but not panoramas
 private val ASPECT_RATIOS = 1.3..2.0
 // Commons scales thumbnails for at most 50 files per request
 private const val BATCH_SIZE = 50
 private const val MAX_BATCHES = 20
 private const val LIST_REFRESH_MS = 7 * 24 * 3_600_000L
+// Bump to refetch cached lists after a change to what they store
+private const val LIST_VERSION = 2
 private const val RETRY_MS = 15_000L
 private const val MAX_NAME = 50
 private const val MAX_ARTIST = 40
@@ -97,15 +98,12 @@ enum class WallpaperCategory(val label: String, val commonsCategories: List<Stri
 data class Photo(
     // "File:…", unique on Commons
     val title: String,
-    // The MIN_WIDTH thumbnail
+    // The MIN_WIDTH thumbnail, or LARGE_WIDTH for photos too wide to cover the screen at MIN_WIDTH
     val url: String,
     val name: String,
     val artist: String,
     val license: String,
-) {
-    // The attribution CC BY and CC BY-SA ask for, e.g. "Chensiyuan, CC BY-SA 4.0"
-    val credit: String get() = listOf(artist, license).filter { it.isNotBlank() }.joinToString(", ")
-}
+)
 
 // What to show now, and how long to wait before calling updateWallpaper again
 data class WallpaperUpdate(val photo: Photo?, val delayMs: Long)
@@ -228,7 +226,13 @@ private fun parsePhoto(page: JSONObject): Photo? {
     if (width < MIN_WIDTH || height <= 0 || width.toDouble() / height !in ASPECT_RATIOS) return null
     val title = page.optString("title").ifBlank { return null }
     if (title in EXCLUDED) return null
-    val url = info.optString("thumburl").ifBlank { return null }
+    val thumb = info.optString("thumburl").ifBlank { return null }
+    // Not the original between the two widths: it may be a TIFF, which BitmapFactory can't decode
+    val url = if (width.toDouble() / height > MIN_WIDTH.toDouble() / MIN_HEIGHT && width >= LARGE_WIDTH) {
+        thumb.replace("/${MIN_WIDTH}px-", "/${LARGE_WIDTH}px-")
+    } else {
+        thumb
+    }
     val metadata = info.optJSONObject("extmetadata")
     fun field(key: String) = metadata?.optJSONObject(key)?.optString("value").orEmpty()
     val name = plainText(field("ObjectName")).ifBlank { title.removePrefix("File:").substringBeforeLast('.') }
@@ -276,11 +280,13 @@ private fun listFile(dir: File, category: String) = File(dir, "lists/${category.
 private fun refreshLists(dir: File, categories: Set<WallpaperCategory>, now: Long) {
     for (category in categories.flatMap { it.commonsCategories }) {
         val file = listFile(dir, category)
-        val fetchedAt = readJson(file)?.optLong("fetchedAt") ?: 0L
-        if (now - fetchedAt in 0..LIST_REFRESH_MS) continue
+        val cached = readJson(file)
+        val fetchedAt = cached?.optLong("fetchedAt") ?: 0L
+        if (cached?.optInt("version") == LIST_VERSION && now - fetchedAt in 0..LIST_REFRESH_MS) continue
         try {
             val photos = JSONArray(fetchCategory(category).map { it.toJson() })
-            writeAtomically(file, JSONObject().put("fetchedAt", now).put("photos", photos).toString().toByteArray())
+            val list = JSONObject().put("version", LIST_VERSION).put("fetchedAt", now).put("photos", photos)
+            writeAtomically(file, list.toString().toByteArray())
         } catch (e: IOException) {
             Log.w(TAG, "Couldn't fetch $category", e)
         } catch (e: JSONException) {
@@ -454,29 +460,3 @@ fun wallpaperGlass(state: WallpaperState, photoSize: IntSize, fade: () -> Float)
 private fun Density.parallax(fade: Float) = -ParallaxRange.toPx() * fade
 
 private fun scrollScrim(fade: Float) = SCROLLED_SCRIM * fade
-
-// The name gives way when space runs short; the credit, which the licence asks for, never does
-@Composable
-fun PhotoCredit(photo: Photo, modifier: Modifier = Modifier) {
-    val style = LocalTextStyle.current.copy(color = LocalColors.current.textSecondary, fontSize = 13.sp)
-    val credit = when {
-        photo.credit.isBlank() -> ""
-        photo.name.isBlank() -> photo.credit
-        else -> " · ${photo.credit}"
-    }
-    Layout(
-        content = {
-            Text(photo.name, style = style, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(credit, style = style, maxLines = 1, softWrap = false)
-        },
-        modifier = modifier,
-    ) { (name, tail), constraints ->
-        val loose = constraints.copy(minWidth = 0)
-        val tailPlaced = tail.measure(loose)
-        val namePlaced = name.measure(loose.copy(maxWidth = (loose.maxWidth - tailPlaced.width).coerceAtLeast(0)))
-        layout(namePlaced.width + tailPlaced.width, maxOf(namePlaced.height, tailPlaced.height)) {
-            namePlaced.place(0, 0)
-            tailPlaced.place(namePlaced.width, 0)
-        }
-    }
-}

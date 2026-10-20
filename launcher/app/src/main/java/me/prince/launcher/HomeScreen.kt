@@ -6,7 +6,11 @@ import android.view.Window
 import android.content.Intent
 import android.text.format.DateFormat
 import androidx.annotation.DrawableRes
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
 import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.animation.core.tween
@@ -32,6 +36,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -42,11 +47,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -75,10 +80,18 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -113,10 +126,17 @@ import java.time.format.DateTimeFormatter
 
 internal val TileWidth = 200.dp
 internal val TileHeight = 112.dp
-// Five across on a 960dp-wide screen, in two rows
-internal val FavouriteTileWidth = 150.dp
-internal val FavouriteTileHeight = 84.dp
-private const val FAVOURITE_ROWS = 2
+// Favourites dock along the bottom of the first screen; tiles are sized from its width so exactly DOCK_COLUMNS fit
+private const val DOCK_COLUMNS = 6
+private val DockMargin = 40.dp
+// Also the gap between tiles: a smaller gap would put the next tile inside the end padding, peeking
+private val DockPadding = 20.dp
+private val DockVerticalPadding = 18.dp
+private val DockShape = RoundedCornerShape(28.dp)
+private val DockBottomMargin = 28.dp
+// The All apps grid, five columns
+internal val GridTileWidth = 150.dp
+internal val GridTileHeight = 84.dp
 internal val TileShape = RoundedCornerShape(14.dp)
 internal val FavouriteTileShape = RoundedCornerShape(12.dp)
 // Left/right margin for text; rows use it as content padding so tiles can run off the screen edge
@@ -143,8 +163,8 @@ private val BarFadeDistance = 40.dp
 private val WallpaperFadeDistance = 300.dp
 // Once the theme and photo fades have finished and drawn their last frame
 private val RECAPTURE_DELAY_MS = maxOf(THEME_FADE_MS, CROSSFADE_MS) + 200L
-private val ScoreCardWidth = 240.dp
-private val CreditMaxWidth = 420.dp
+private val ScoreCardWidth = 212.dp
+private val ScoreCardHeight = 84.dp
 private val LiveRed = Color(0xFFFF453A)
 
 private data class MenuTarget(val app: TvApp, val canMove: Boolean, val backdrop: ImageBitmap?)
@@ -185,9 +205,8 @@ fun HomeScreen(
     var swallowKeyUp by remember { mutableStateOf<Key?>(null) }
     var refocus by remember { mutableIntStateOf(0) }
     val scroll = rememberScrollState()
-    val favouriteRows = remember { List(FAVOURITE_ROWS) { LazyListState() } }
+    val favouriteRow = remember { LazyListState() }
     val firstTile = remember { FocusRequester() }
-    val movingTile = remember { FocusRequester() }
     val page = remember { FocusRequester() }
 
     LaunchedEffect(reloadKey) {
@@ -200,8 +219,6 @@ fun HomeScreen(
 
     val byPackage = remember(apps) { apps.associateBy { it.packageName } }
     val favourites = favouriteIds.mapNotNull { byPackage[it] }
-    // Row-major: the first half on top, the rest below
-    val favouritesPerRow = ((favourites.size + FAVOURITE_ROWS - 1) / FAVOURITE_ROWS).coerceAtLeast(1)
     // Favourites are already one row up
     val recents = recentIds.filter { it !in favouriteIds }.mapNotNull { byPackage[it] }.take(RECENT_COUNT)
 
@@ -227,33 +244,29 @@ fun HomeScreen(
         }
         if (from < 0 || to !in favourites.indices) return true
         updateFavourites(favourites.map { it.packageName }.toMutableList().apply { add(to, removeAt(from)) })
-        val row = favouriteRows[to / favouritesPerRow]
-        val index = to % favouritesPerRow
-        if (from / favouritesPerRow != to / favouritesPerRow) {
-            // Crossing into the other row recomposes the tile there, which drops focus
-            scope.launch {
-                row.scrollToItem(index)
-                movingTile.requestFocusWhenAttached()
-            }
-        } else if (!row.isFullyVisible(index)) {
+        if (!favouriteRow.isFullyVisible(to)) {
             // Focus stays on the moved tile but nothing scrolls it into view, so do it by hand
-            val first = row.firstVisibleItemIndex
-            scope.launch { row.animateScrollToItem(if (index <= first) index else first + 1) }
+            val first = favouriteRow.firstVisibleItemIndex
+            scope.launch { favouriteRow.animateScrollToItem(if (to <= first) to else first + 1) }
         }
         return true
     }
 
+    LaunchedEffect(homePresses) {
+        panel = null
+        menu = null
+    }
     LaunchedEffect(apps.isNotEmpty(), homePresses, refocus) {
         if (apps.isEmpty()) return@LaunchedEffect
         movingId = null
         scroll.animateScrollTo(0)
-        favouriteRows.forEach { it.scrollToItem(0) }
+        favouriteRow.scrollToItem(0)
         // On cold start the tile may not be attached for a few frames; if focus is never set,
         // Android picks an arbitrary element (seen: the Settings pill)
         firstTile.requestFocusWhenAttached()
     }
 
-    // Only the title and the glow read this, so moving focus recomposes just them
+    // Only the glow reads this, so moving focus recomposes just it
     val shownApp = { focusedApp ?: favourites.firstOrNull() ?: apps.firstOrNull() }
 
     var games by remember { mutableStateOf(emptyList<Game>()) }
@@ -349,168 +362,161 @@ fun HomeScreen(
     val edgeMargin = with(density) { 40.dp.toPx() }
     val rowScrollSpec = remember(edgeMargin) { minimalScroll(edgeMargin) }
     // Focused rows stop below the pinned bar instead of sliding under it
-    val verticalScrollSpec = remember(edgeMargin, barHeight) { minimalScroll(edgeMargin, topInset = barHeight.toFloat()) }
+    val verticalScrollSpec = remember(edgeMargin, barHeight) { minimalScroll(edgeMargin, topInset = barHeight.toFloat(), page = scroll) }
     val barFadeDistance = with(density) { BarFadeDistance.toPx() }
     val wallpaperFadeDistance = with(density) { WallpaperFadeDistance.toPx() }
     val wallpaperFade = { (scroll.value / wallpaperFadeDistance).coerceIn(0f, 1f) }
     val glass = remember(wallpaper, photoSize) { wallpaperGlass(wallpaper, photoSize, wallpaperFade) }
-
     MaterialTheme(colorScheme = darkColorScheme()) {
-    LauncherTheme(light) {
-        CompositionLocalProvider(
-            LocalBringIntoViewSpec provides rowScrollSpec,
-            LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = UiText),
-        ) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .onPreviewKeyEvent {
-                        val down = it.type == KeyEventType.KeyDown
-                        if (down) keyPresses++
-                        when {
-                            !down && it.key == swallowKeyUp -> {
-                                swallowKeyUp = null
-                                true
-                            }
-                            // Swallow key-ups too while moving, e.g. the OK release from the menu
-                            movingId != null -> !down || handleMoveKey(it.key)
-                            else -> false
-                        }
-                    }
-                    .drawWithContent {
-                        drawContent()
-                        if (dim > 0f) drawRect(Color.Black.copy(alpha = dim))
-                    }
+        LauncherTheme(light) {
+            CompositionLocalProvider(
+                LocalBringIntoViewSpec provides rowScrollSpec,
+                LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = UiText),
             ) {
-                if (photoUp) Wallpaper(wallpaper, photoSize, wallpaperFade) else Ambient { shownApp()?.glow }
-                CompositionLocalProvider(LocalGlassSource provides glass.takeIf { photoUp }) {
-                CompositionLocalProvider(LocalBringIntoViewSpec provides verticalScrollSpec) {
-                Column(
+                Box(
                     Modifier
                         .fillMaxSize()
-                        .offset { shift }
-                        .focusRequester(page)
-                        .verticalScroll(scroll)
-                ) {
-                CompositionLocalProvider(LocalBringIntoViewSpec provides rowScrollSpec) {
-                    Spacer(Modifier.height(with(density) { barHeight.toDp() }))
-                    Spacer(Modifier.height(118.dp))
-                    AppTitle({ shownApp()?.label.orEmpty() }, { wallpaper.shown?.photo?.takeIf { photoUp } }, moving = movingId != null)
-                    val onFocused = { app: TvApp -> focusedApp = app }
-                    favourites.chunked(favouritesPerRow).forEachIndexed { row, rowApps ->
-                        Shelf(
-                            rowApps,
-                            favouriteRows[row],
-                            firstTile.takeIf { row == 0 },
-                            onLaunch,
-                            { openMenu(it, canMove = true) },
-                            onFocused,
-                            FavouriteTileWidth,
-                            FavouriteTileHeight,
-                            FavouriteTileShape,
-                            // Closer together than separate shelves, still room for the focus scale and glow
-                            verticalPadding = 12.dp,
-                            movingId = movingId,
-                            movingTile = movingTile,
-                        )
-                    }
-                    if (games.isNotEmpty()) {
-                        ShelfLabel("Sports")
-                        SportsShelf(games, onOpenGame)
-                    }
-                    if (recents.isNotEmpty()) {
-                        ShelfLabel("Recent")
-                        Shelf(recents, rememberLazyListState(), null, onLaunch, { openMenu(it, canMove = false) }, onFocused)
-                    }
-                    Spacer(Modifier.height(40.dp))
-                }
-                }
-                }
-                TopBar(
-                    alpha = { (scroll.value / barFadeDistance).coerceIn(0f, 1f) },
-                    shift = { shift },
-                    onHeight = { barHeight = it },
-                    below = page,
-                ) {
-                    Header(
-                        clock = { now.value },
-                        onInputs = { openPanel(Panel.Inputs) }.takeIf { inputs.isNotEmpty() },
-                        onAllApps = { openPanel(Panel.AllApps) },
-                        allAppsFocus = firstTile.takeIf { favourites.isEmpty() },
-                        onHomeScreen = { openPanel(Panel.HomeScreen) },
-                        onSettings = onSettings,
-                        onPicture = onPicture,
-                        onSound = onSound,
-                    )
-                }
-                }
-            }
-
-            panel?.let { (kind, backdrop) ->
-                val launchAndClose = { app: TvApp ->
-                    onLaunch(app)
-                    panel = null
-                }
-                when (kind) {
-                    Panel.AllApps -> AppGridPanel(
-                        "All apps", apps, FavouriteTileWidth, FavouriteTileHeight, FavouriteTileShape, backdrop,
-                        onLaunch = launchAndClose,
-                        onMenu = { app, from -> openMenu(app, canMove = false, from) },
-                        onDismiss = { panel = null },
-                    )
-                    Panel.Inputs -> AppGridPanel(
-                        "Inputs", inputs, TileWidth, TileHeight, TileShape, backdrop,
-                        onLaunch = launchAndClose,
-                        onMenu = { _, _ -> },
-                        onDismiss = { panel = null },
-                    )
-                    Panel.HomeScreen -> {
-                        // The backdrop is a still capture, so take it again after the screen behind it changes
-                        LaunchedEffect(Unit) {
-                            snapshotFlow { Triple(light, photoUp, wallpaper.shown) }.drop(1).collectLatest {
-                                delay(RECAPTURE_DELAY_MS)
-                                captureBlurredWindow(window) { captured -> captured?.let { panel = panel?.copy(backdrop = it) } }
+                        .onPreviewKeyEvent {
+                            val down = it.type == KeyEventType.KeyDown
+                            if (down) keyPresses++
+                            when {
+                                !down && it.key == swallowKeyUp -> {
+                                    swallowKeyUp = null
+                                    true
+                                }
+                                // Swallow key-ups too while moving, e.g. the OK release from the menu
+                                movingId != null -> !down || handleMoveKey(it.key)
+                                else -> false
                             }
                         }
-                        HomeScreenPanel(
-                            prefs = prefs,
-                            daylight = daylight(location, now.value.toLocalDate(), ZoneId.systemDefault()),
-                            photo = wallpaper.shown?.photo?.takeIf { photoUp },
-                            backdrop = backdrop,
-                            onChange = ::updatePrefs,
-                            onNextPhoto = { nextPhoto.trySend(Unit) },
-                            onDismiss = { panel = null },
-                        )
+                        .drawWithContent {
+                            drawContent()
+                            if (dim > 0f) drawRect(Color.Black.copy(alpha = dim))
+                        }
+                ) {
+                    if (photoUp) Wallpaper(wallpaper, photoSize, wallpaperFade) else Ambient { shownApp()?.glow }
+                    CompositionLocalProvider(
+                        LocalGlassSource provides glass.takeIf { photoUp },
+                        LocalBringIntoViewSpec provides verticalScrollSpec,
+                    ) {
+                        Column(
+                            Modifier
+                                .fillMaxSize()
+                                .offset { shift }
+                                .focusRequester(page)
+                                .verticalScroll(scroll)
+                        ) {
+                            CompositionLocalProvider(LocalBringIntoViewSpec provides rowScrollSpec) {
+                                Spacer(Modifier.height(with(density) { barHeight.toDp() }))
+                                val onFocused = { app: TvApp -> focusedApp = app }
+                                // The dock sits at the bottom of the first screen; the shelves below stay out of sight until focus moves down
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(LocalConfiguration.current.screenHeightDp.dp - with(density) { barHeight.toDp() }),
+                                    contentAlignment = Alignment.BottomStart,
+                                ) {
+                                    Column(Modifier.padding(bottom = DockBottomMargin)) {
+                                        NowPlayingSlot()
+                                        MoveHint(moving = movingId != null)
+                                        Dock(favourites, favouriteRow, firstTile, onLaunch, { openMenu(it, canMove = true) }, onFocused)
+                                    }
+                                }
+                                if (games.isNotEmpty()) {
+                                    ShelfLabel("Sports")
+                                    SportsShelf(games, onOpenGame)
+                                }
+                                if (recents.isNotEmpty()) {
+                                    ShelfLabel("Recent")
+                                    Shelf(recents, rememberLazyListState(), null, onLaunch, { openMenu(it, canMove = false) }, onFocused)
+                                }
+                                Spacer(Modifier.height(40.dp))
+                            }
+                        }
+                        TopBar(
+                            alpha = { (scroll.value / barFadeDistance).coerceIn(0f, 1f) },
+                            shift = { shift },
+                            onHeight = { barHeight = it },
+                            below = page,
+                        ) {
+                            Header(
+                                clock = { now.value },
+                                onInputs = { openPanel(Panel.Inputs) }.takeIf { inputs.isNotEmpty() },
+                                onAllApps = { openPanel(Panel.AllApps) },
+                                allAppsFocus = firstTile.takeIf { favourites.isEmpty() },
+                                onHomeScreen = { openPanel(Panel.HomeScreen) },
+                                onSettings = onSettings,
+                                onPicture = onPicture,
+                                onSound = onSound,
+                            )
+                        }
                     }
                 }
-            }
 
-            menu?.let { (app, canMove, backdrop) ->
-                val isFavourite = app.packageName in favouriteIds
-                AppMenu(
-                    app = app,
-                    backdrop = backdrop,
-                    isFavourite = isFavourite,
-                    canMove = canMove,
-                    onDismiss = { menu = null },
-                    onMove = {
-                        menu = null
-                        movingId = app.packageName
-                    },
-                    onToggleFavourite = {
-                        menu = null
-                        updateFavourites(if (isFavourite) favouriteIds - app.packageName else favouriteIds + app.packageName)
-                        // The focused tile just jumped rows (or vanished); start again from the first tile
-                        refocus++
-                    },
-                    onAppInfo = {
-                        menu = null
-                        onAppInfo(app)
-                    },
-                )
+                panel?.let { (kind, backdrop) ->
+                    val launchAndClose = { app: TvApp ->
+                        onLaunch(app)
+                        panel = null
+                    }
+                    when (kind) {
+                        Panel.AllApps -> AppGridPanel(
+                            "All apps", apps, GridTileWidth, GridTileHeight, FavouriteTileShape, backdrop,
+                            onLaunch = launchAndClose,
+                            onMenu = { app, from -> openMenu(app, canMove = false, from) },
+                            onDismiss = { panel = null },
+                        )
+                        Panel.Inputs -> AppGridPanel(
+                            "Inputs", inputs, TileWidth, TileHeight, TileShape, backdrop,
+                            onLaunch = launchAndClose,
+                            onMenu = { _, _ -> },
+                            onDismiss = { panel = null },
+                        )
+                        Panel.HomeScreen -> {
+                            // The backdrop is a still capture, so take it again after the screen behind it changes
+                            LaunchedEffect(Unit) {
+                                snapshotFlow { Triple(light, photoUp, wallpaper.shown) }.drop(1).collectLatest {
+                                    delay(RECAPTURE_DELAY_MS)
+                                    captureBlurredWindow(window) { captured -> captured?.let { panel = panel?.copy(backdrop = it) } }
+                                }
+                            }
+                            HomeScreenPanel(
+                                prefs = prefs,
+                                daylight = daylight(location, now.value.toLocalDate(), ZoneId.systemDefault()),
+                                backdrop = backdrop,
+                                onChange = ::updatePrefs,
+                                onNextPhoto = { nextPhoto.trySend(Unit) },
+                                onDismiss = { panel = null },
+                            )
+                        }
+                    }
+                }
+
+                menu?.let { (app, canMove, backdrop) ->
+                    val isFavourite = app.packageName in favouriteIds
+                    AppMenu(
+                        app = app,
+                        backdrop = backdrop,
+                        isFavourite = isFavourite,
+                        canMove = canMove,
+                        onDismiss = { menu = null },
+                        onMove = {
+                            menu = null
+                            movingId = app.packageName
+                        },
+                        onToggleFavourite = {
+                            menu = null
+                            updateFavourites(if (isFavourite) favouriteIds - app.packageName else favouriteIds + app.packageName)
+                            // The focused tile just jumped rows (or vanished); start again from the first tile
+                            refocus++
+                        },
+                        onAppInfo = {
+                            menu = null
+                            onAppInfo(app)
+                        },
+                    )
+                }
             }
         }
-    }
     }
 }
 
@@ -558,44 +564,28 @@ private fun Ambient(glow: () -> Color?) {
 }
 
 @Composable
-private fun AppTitle(label: () -> String, photo: () -> Photo?, moving: Boolean) {
-    val colors = LocalColors.current
-    val credit = photo().takeIf { !moving }
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = EdgePadding),
-        horizontalArrangement = if (credit != null) Arrangement.SpaceBetween else Arrangement.Start,
-        verticalAlignment = Alignment.Bottom,
+private fun MoveHint(moving: Boolean) {
+    if (!moving) return
+    Text(
+        "◀ ▶ to move, OK to finish",
+        color = LocalColors.current.textSecondary,
+        fontSize = 15.sp,
+        modifier = Modifier.padding(start = DockMargin, bottom = 10.dp),
+    )
+}
+
+// Pops up over the dock while a background app plays; its own composable so playback changes don't recompose the page
+@Composable
+private fun NowPlayingSlot() {
+    val media by rememberNowPlaying()
+    var last by remember { mutableStateOf<NowPlaying?>(null) }
+    media?.let { last = it }
+    AnimatedVisibility(
+        visible = media != null,
+        enter = fadeIn(tween(300)) + slideInVertically(tween(300)) { it / 3 },
+        exit = fadeOut(tween(200)),
     ) {
-        Text(
-            text = label(),
-            color = colors.textPrimary,
-            fontSize = 44.sp,
-            fontFamily = UiDisplay,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
-        )
-        if (moving) {
-            Spacer(Modifier.width(20.dp))
-            Text(
-                "◀ ▶ to move, OK to finish",
-                color = colors.textSecondary,
-                fontSize = 15.sp,
-                modifier = Modifier.padding(bottom = 10.dp),
-            )
-        }
-        // On glass, since the photo behind it can be any brightness
-        credit?.let {
-            PhotoCredit(
-                it,
-                Modifier
-                    .padding(start = 24.dp, bottom = 8.dp)
-                    .widthIn(max = CreditMaxWidth)
-                    .glass(CircleShape)
-                    .padding(horizontal = 12.dp, vertical = 5.dp),
-            )
-        }
+        last?.let { NowPlayingCard(it, Modifier.padding(start = DockMargin, bottom = 12.dp)) }
     }
 }
 
@@ -624,9 +614,16 @@ private fun AppMenu(
 ) {
     val firstItem = remember { FocusRequester() }
     LaunchedEffect(Unit) { firstItem.requestFocusWhenAttached() }
+    // The menu opens while OK is still held; its repeats and release would click the first item
+    var okArmed by remember { mutableStateOf(false) }
     GlassDialog(backdrop, onDismiss, contentAlignment = Alignment.Center) {
         Column(
             Modifier
+                .onPreviewKeyEvent {
+                    if (it.key != Key.DirectionCenter && it.key != Key.Enter) return@onPreviewKeyEvent false
+                    if (it.type == KeyEventType.KeyDown && it.nativeKeyEvent.repeatCount == 0) okArmed = true
+                    !okArmed
+                }
                 .width(360.dp)
                 .glass(MenuShape)
                 .padding(22.dp),
@@ -638,15 +635,17 @@ private fun AppMenu(
                 Text(app.label, color = LocalColors.current.textPrimary, fontSize = 20.sp, fontFamily = UiDisplay, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             val itemModifier = Modifier.fillMaxWidth()
-            if (canMove) Pill(null, "Move", onMove, itemModifier.focusRequester(firstItem), fillWidth = true)
+            // Milky like the menu card they sit on
+            if (canMove) Pill(null, "Move", onMove, itemModifier.focusRequester(firstItem), fillWidth = true, smoked = false)
             Pill(
                 null,
                 if (isFavourite) "Remove from favourites" else "Add to favourites",
                 onToggleFavourite,
                 if (canMove) itemModifier else itemModifier.focusRequester(firstItem),
                 fillWidth = true,
+                smoked = false,
             )
-            Pill(null, "App info", onAppInfo, itemModifier, fillWidth = true)
+            Pill(null, "App info", onAppInfo, itemModifier, fillWidth = true, smoked = false)
         }
     }
 }
@@ -654,11 +653,13 @@ private fun AppMenu(
 // Compose's TV default pins the focused item 30% from the edge, which scrolls the header away.
 // Scroll only when the item would leave the screen, keeping a margin so the focus scale isn't clipped.
 @OptIn(ExperimentalFoundationApi::class)
-private fun minimalScroll(margin: Float, topInset: Float = 0f) = object : BringIntoViewSpec {
+private fun minimalScroll(margin: Float, topInset: Float = 0f, page: ScrollState? = null) = object : BringIntoViewSpec {
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
         val start = offset - margin - topInset
         val end = offset + size + margin
         return when {
+            // Anything on the first screen (the dock) takes the page back to the top, where the bar hides
+            page != null && offset + page.value + size + margin <= containerSize -> -page.value.toFloat()
             start < 0 -> start
             end > containerSize -> end - containerSize
             else -> 0f
@@ -735,14 +736,14 @@ private fun Header(
             onInputs?.let { Pill(R.drawable.ic_input, "Inputs", it) }
             Pill(
                 R.drawable.ic_apps,
-                "All apps",
+                null,
                 onAllApps,
                 if (allAppsFocus != null) Modifier.focusRequester(allAppsFocus) else Modifier,
             )
             Pill(R.drawable.ic_wallpaper, null, onHomeScreen)
             onPicture?.let { Pill(R.drawable.ic_picture, null, it) }
             onSound?.let { Pill(R.drawable.ic_sound, null, it) }
-            Pill(R.drawable.ic_settings, "Settings", onSettings)
+            Pill(R.drawable.ic_settings, null, onSettings)
         }
     }
 }
@@ -802,6 +803,7 @@ internal fun Pill(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     fillWidth: Boolean = false,
+    smoked: Boolean = true,
 ) {
     var focused by remember { mutableStateOf(false) }
     val colors = LocalColors.current
@@ -811,7 +813,7 @@ internal fun Pill(
         shape = ClickableSurfaceDefaults.shape(CircleShape),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
-            contentColor = colors.textPrimary,
+            contentColor = if (smoked) colors.onSmoke else colors.textPrimary,
             focusedContainerColor = Color.White,
             focusedContentColor = Color.Black,
         ),
@@ -821,7 +823,7 @@ internal fun Pill(
         Row(
             Modifier
                 .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
-                .glass(CircleShape, enabled = !focused)
+                .glass(CircleShape, enabled = !focused, smoked = smoked)
                 .padding(horizontal = if (label == null) 11.dp else 20.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -846,15 +848,12 @@ private fun Shelf(
     tileWidth: Dp = TileWidth,
     tileHeight: Dp = TileHeight,
     shape: RoundedCornerShape = TileShape,
-    verticalPadding: Dp = 22.dp,
-    movingId: String? = null,
-    movingTile: FocusRequester? = null,
 ) {
     if (apps.isEmpty()) return
     LazyRow(
         state = state,
         // Vertical room for the focus scale and glow
-        contentPadding = PaddingValues(horizontal = EdgePadding, vertical = verticalPadding),
+        contentPadding = PaddingValues(horizontal = EdgePadding, vertical = 22.dp),
         horizontalArrangement = Arrangement.spacedBy(24.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -869,9 +868,55 @@ private fun Shelf(
                 shape = shape,
                 modifier = Modifier
                     .then(if (requester != null) Modifier.focusRequester(requester) else Modifier)
-                    .then(if (movingTile != null && app.packageName == movingId) Modifier.focusRequester(movingTile) else Modifier)
                     .onFocusChanged { if (it.isFocused) onFocused(app) },
             )
+        }
+    }
+}
+
+// Glass dock holding the favourites; the glass clips, so tiles scrolling past slide under its edge
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Dock(
+    apps: List<TvApp>,
+    state: LazyListState,
+    firstTile: FocusRequester,
+    onLaunch: (TvApp) -> Unit,
+    onMenu: (TvApp) -> Unit,
+    onFocused: (TvApp) -> Unit,
+) {
+    if (apps.isEmpty()) return
+    // A margin of exactly the padding makes each scroll one whole slot, so the tiles rest aligned with no partial tile
+    val scrollSpec = with(LocalDensity.current) { remember(this) { minimalScroll(DockPadding.toPx()) } }
+    BoxWithConstraints(
+        Modifier
+            .padding(horizontal = DockMargin)
+            .fillMaxWidth()
+            .glass(DockShape, smoked = true)
+    ) {
+        val tileWidth = (maxWidth - DockPadding * (DOCK_COLUMNS + 1)) / DOCK_COLUMNS
+        val tileHeight = tileWidth * 9 / 16
+        CompositionLocalProvider(LocalBringIntoViewSpec provides scrollSpec) {
+            LazyRow(
+                state = state,
+                contentPadding = PaddingValues(horizontal = DockPadding, vertical = DockVerticalPadding),
+                horizontalArrangement = Arrangement.spacedBy(DockPadding),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                itemsIndexed(apps, key = { _, app -> app.packageName }) { index, app ->
+                    AppTile(
+                        app = app,
+                        onClick = { onLaunch(app) },
+                        onLongClick = { onMenu(app) },
+                        width = tileWidth,
+                        height = tileHeight,
+                        shape = FavouriteTileShape,
+                        modifier = Modifier
+                            .then(if (index == 0) Modifier.focusRequester(firstTile) else Modifier)
+                            .onFocusChanged { if (it.isFocused) onFocused(app) },
+                    )
+                }
+            }
         }
     }
 }
@@ -971,18 +1016,18 @@ private fun FocusTile(
 private fun SportsShelf(games: List<Game>, onOpen: (Intent) -> Unit) {
     LazyRow(
         contentPadding = PaddingValues(horizontal = EdgePadding, vertical = 22.dp),
-        horizontalArrangement = Arrangement.spacedBy(24.dp),
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         items(games, key = { it.id }) { game ->
-            FocusTile(game.glow, ScoreCardWidth, TileHeight, TileShape, { game.launch?.let(onOpen) }, null, Modifier) {
+            FocusTile(game.glow, ScoreCardWidth, ScoreCardHeight, TileShape, { game.launch?.let(onOpen) }, null, Modifier) {
                 ScoreCard(game)
             }
         }
     }
 }
 
-// Away team over home team, then the clock or start time and the network
+// Clock or start time and the network on top, then away vs home facing each other
 @Composable
 private fun ScoreCard(game: Game) {
     val colors = LocalColors.current
@@ -997,57 +1042,102 @@ private fun ScoreCard(game: Game) {
         }
         else -> game.detail
     }
+    val final = game.state == GameState.Final
     Row(Modifier.fillMaxSize().glass(TileShape)) {
         Box(
             Modifier
-                .padding(vertical = 18.dp)
+                .padding(vertical = 14.dp)
                 .width(3.dp)
                 .fillMaxHeight()
                 .background(if (game.isMine) colors.textPrimary.copy(alpha = 0.85f) else Color.Transparent, CircleShape)
         )
-        Column(Modifier.fillMaxSize().padding(start = 11.dp, end = 14.dp, top = 12.dp, bottom = 10.dp)) {
-            val showScore = game.state != GameState.Upcoming
-            TeamLine(game.away, showScore, dim = game.state == GameState.Final && !game.away.winner)
-            Spacer(Modifier.height(4.dp))
-            TeamLine(game.home, showScore, dim = game.state == GameState.Final && !game.home.winner)
-            Spacer(Modifier.weight(1f))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.fillMaxSize().padding(start = 7.dp, end = 10.dp, top = 10.dp, bottom = 8.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 if (live) {
-                    Box(Modifier.size(7.dp).background(LiveRed, CircleShape))
-                    Spacer(Modifier.width(6.dp))
+                    Box(Modifier.size(6.dp).background(LiveRed, CircleShape))
+                    Spacer(Modifier.width(5.dp))
                 }
                 Text(
                     status,
                     color = if (live) colors.textPrimary else colors.textSecondary,
-                    fontSize = 13.sp,
+                    fontSize = 12.sp,
                     fontWeight = if (live) FontWeight.SemiBold else FontWeight.Normal,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f, fill = false),
                 )
                 game.network?.let {
-                    Text(it, color = colors.textSecondary, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(start = 8.dp))
+                    Text(" · $it", color = colors.textSecondary, fontSize = 12.sp, maxLines = 1, softWrap = false)
                 }
+            }
+            Row(Modifier.fillMaxWidth().weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                TeamSide(game.away, logoFirst = true, dim = final && !game.away.winner)
+                val away = game.away.score
+                val home = game.home.score
+                if (game.state != GameState.Upcoming && away != null && home != null) {
+                    FittedScore(
+                        buildAnnotatedString {
+                            withStyle(SpanStyle(color = if (final && !game.away.winner) colors.textSecondary else colors.textPrimary)) { append(away) }
+                            append("\u2009–\u2009")
+                            withStyle(SpanStyle(color = if (final && !game.home.winner) colors.textSecondary else colors.textPrimary)) { append(home) }
+                        },
+                        Modifier.weight(1f),
+                    )
+                } else {
+                    Text("vs", color = colors.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+                }
+                TeamSide(game.home, logoFirst = false, dim = final && !game.home.winner)
             }
         }
     }
 }
 
+// Largest size from 15sp down that fits between the teams; late basketball scores and 4-letter college teams fill the card
 @Composable
-private fun TeamLine(side: Side, showScore: Boolean, dim: Boolean) {
-    val colors = LocalColors.current
-    val color = if (dim) colors.textSecondary else colors.textPrimary
-    Row(Modifier.height(26.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (side.logo != null) {
-            Image(side.logo, contentDescription = null, modifier = Modifier.size(24.dp))
-        } else {
-            Spacer(Modifier.size(24.dp))
+private fun FittedScore(score: AnnotatedString, modifier: Modifier) {
+    val measurer = rememberTextMeasurer()
+    val base = LocalTextStyle.current.merge(TextStyle(fontWeight = FontWeight.SemiBold))
+    BoxWithConstraints(modifier.padding(horizontal = 4.dp), contentAlignment = Alignment.Center) {
+        val maxPx = constraints.maxWidth
+        val size = remember(score, maxPx) {
+            listOf(15, 14, 13, 12, 11).firstOrNull { sp ->
+                measurer.measure(score, base.copy(fontSize = sp.sp), maxLines = 1, softWrap = false).size.width <= maxPx
+            } ?: 11
         }
-        Spacer(Modifier.width(10.dp))
-        Text(side.abbr, color = color, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-        Spacer(Modifier.weight(1f))
-        if (showScore && side.score != null) {
-            Text(side.score, color = color, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text(score, color = LocalColors.current.textSecondary, style = base.copy(fontSize = size.sp), maxLines = 1, softWrap = false)
+    }
+}
+
+@Composable
+private fun TeamSide(side: Side, logoFirst: Boolean, dim: Boolean) {
+    val colors = LocalColors.current
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        val logo = @Composable {
+            if (side.logo != null) {
+                Image(side.logo, contentDescription = null, modifier = Modifier.size(24.dp))
+            } else {
+                Spacer(Modifier.size(24.dp))
+            }
+        }
+        val abbr = @Composable {
+            Text(
+                side.abbr,
+                color = if (dim) colors.textSecondary else colors.textPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+        }
+        if (logoFirst) {
+            logo()
+            abbr()
+        } else {
+            abbr()
+            logo()
         }
     }
 }
