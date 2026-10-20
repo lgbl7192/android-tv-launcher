@@ -1,26 +1,30 @@
 # Android TV: Debloat + Custom Launcher
 
-Remove the bloatware and ads from an Android TV, and replace the stock home screen with a clean, Apple TV-style launcher with trending recommendations. No root, no USB cable, and everything is reversible.
+Remove the bloatware and ads from an Android TV, and replace the stock home screen with a clean, Apple TV-style launcher over rotating landscape photos. No root, no USB cable, and everything is reversible.
 
 Written up end to end here: [How I Debloated My Android TV and Built My Own Launcher With Claude Code](https://princejain.me/blogs/debloat-android-tv-custom-launcher-claude-code).
 
-![Home screen: frosted glass buttons over a trending title's backdrop, a favourites row running off the screen edge](docs/home.jpg)
+![Home screen at night: a lake photo from Wikimedia Commons behind frosted glass buttons, two rows of favourites and the photo's credit next to the app name](docs/home.jpg)
 
 | | |
 |---|---|
-| ![Trending title with a "Watch on Amazon Prime Video" button](docs/trending.jpg) | ![Inputs, Recent and All apps rows](docs/rows.jpg) |
-| **Trending this week**, with a button that opens the app that streams it | **HDMI inputs, Recent and All apps** |
+| ![The same photo in light mode, washed white behind dark text](docs/light.jpg) | ![The Home screen panel: appearance, wallpaper, categories, change interval and Next photo](docs/home-screen-panel.jpg) |
+| **Light mode** by day, switched at sunrise and sunset | **Home screen panel**, behind the photo button |
+| ![All apps panel: a five-column grid of every app](docs/all-apps.jpg) | ![Plain colour in light mode: a soft grey with the focused app's colour glowing behind it](docs/plain.jpg) |
+| **All apps** | **Plain colour** instead of a photo |
 
 ## Features
 
 - **Apple TV-style look.** Frosted glass buttons, rows that run off the screen edge, focus shown by a lift and a glow in the app's colour (no thick borders), and the [Inter](https://rsms.me/inter/) font in text and display sizes.
-- **Trending this week** (optional). Popular movies and shows from [TMDB](https://www.themoviedb.org/) with a full-width backdrop, logo, rating and summary. The button opens **the app that streams the title in your country** (Netflix, Prime Video, Disney+, Hotstar, Apple TV+, Hulu, Paramount+) if you have it installed, otherwise the title's page in Stremio if you have that.
+- **Wallpapers.** Featured photos from [Wikimedia Commons](https://commons.wikimedia.org/) fill the screen: lakes, mountains, forests, coasts and night skies. A new photo fades in every 5 minutes, 15 minutes, hour or day, and its title, author and licence sit next to the app name. The next photo downloads ahead of time, so after a restart the last one is back at once, even offline. If you prefer, choose a plain background instead.
+- **Light by day, dark at night.** Auto switches at sunrise and sunset where the TV is. The TV works the times out from its location, with no network call. You can also keep it on Light or Dark.
 - **Live sports** (optional). A row of live, upcoming and recent games from ESPN's free scoreboard (no key), your teams first. Selecting a game opens the app that carries it (ESPN, Fox One, Peacock, Paramount+, HBO Max, Prime Video, Apple TV…). It only refreshes while the home screen is showing: every minute during live games, otherwise every 15 minutes.
-- **Your apps, your order.** Two rows of favourites and an all-apps row. Long-press any tile to **move it, add it to or remove it from favourites**, or open App info.
+- **Your apps, your order.** Two rows of favourites, and every app in the **All apps** panel. Long-press any tile to **move it, add it to or remove it from favourites**, or open App info.
 - **Recent** row of your most-used apps (favourites left out, since they're one row up).
-- **HDMI inputs as tiles** on TVs, named after the connected device where the TV reports it (e.g. "Apple TV · HDMI 1"). Hidden on streaming boxes.
-- **Header**: clock, greeting, date and weather ([Open-Meteo](https://open-meteo.com/), no key needed), plus Picture, Sound, Wi-Fi and Settings buttons.
-- **OLED care**: pure black background, the layout drifts a few pixels every two minutes, and the screen dims after a minute of no input and 25% at night. One switch turns it off on LCD TVs.
+- **Header**: clock, greeting, date and weather ([Open-Meteo](https://open-meteo.com/), no key needed), and buttons for Inputs, All apps, Home screen and Settings. Picture and Sound buttons appear when the TV has those settings screens.
+- **Inputs panel** on TVs: the connected HDMI inputs, named after the device where the TV reports it (for example "Apple TV · HDMI 1"). The button is hidden when nothing is connected, so streaming boxes never show it.
+- **Home screen panel** (the photo button): appearance (Auto, Light or Dark, where Auto shows today's light hours), photos or a plain colour, which categories to show, how often to change the photo, and **Next photo**.
+- **OLED care**: a pure black background in dark mode, the layout drifts a few pixels every two minutes, and the screen dims after a minute of no input and 25% at night. One switch turns it off on LCD TVs.
 
 ## What's inside
 
@@ -31,7 +35,7 @@ debloat/
   packages.txt              your removal list (empty template)
   examples/xiaomi-tv.txt    the 32 packages removed from a Xiaomi OLED TV
 launcher/                   the home screen (Kotlin + Jetpack Compose for TV)
-  local.properties.example  SDK path and the optional TMDB settings
+  local.properties.example  SDK path and the optional sports settings
   third_party/Inter-OFL.txt licence for the bundled Inter font
 ```
 
@@ -41,7 +45,6 @@ launcher/                   the home screen (Kotlin + Jetpack Compose for TV)
 - A laptop on the same Wi-Fi.
 - [ADB](https://developer.android.com/tools/adb) (`brew install --cask android-platform-tools` on a Mac).
 - For the launcher: [Android Studio](https://developer.android.com/studio) (free), which provides the JDK and Android SDK. You never have to open it.
-- Optional: a free TMDB key for the trending section (steps below).
 - Optional but recommended: a coding agent such as [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) to do all of this for you.
 
 ## The easy way: let a coding agent do it
@@ -51,7 +54,7 @@ Open your coding agent in this folder and paste:
 ```text
 I want to debloat my Android TV and install the custom launcher in this repo. This is a TV I own.
 Developer mode and USB debugging are on. TV IP: <your TV's IP>. Same Wi-Fi as this laptop.
-Apps I use: <e.g. Netflix, Prime Video, YouTube>. My TMDB key: <key, or "none">. Country: <e.g. IN>.
+Apps I use: <e.g. Netflix, Prime Video, YouTube>.
 
 Read README.md and CLAUDE.md first. Connect over ADB, list every installed app grouped by category,
 and mark what's bloat, what's safe to keep and what must never be removed. Ask me before removing
@@ -95,18 +98,7 @@ cd debloat
 
 Apps are removed with `pm uninstall -k --user 0`, which hides them from your user profile without deleting them from the system. **Never remove** Live TV, chip/vendor services (e.g. `com.mediatek.*`), the remote's Bluetooth service, TV settings, Play Services or the keyboard: doing so can break the remote, the inputs or booting.
 
-### 3. Get a free TMDB key (optional, for "Trending this week")
-
-TMDB (The Movie Database) is a free, community-built film and TV database. Its API is free for personal, non-commercial use.
-
-1. Create an account at [themoviedb.org/signup](https://www.themoviedb.org/signup) and confirm your email.
-2. Open [Settings → API](https://www.themoviedb.org/settings/api) and click **Request an API Key** (choose **Developer** if asked).
-3. Accept the terms and fill in the short form. Personal details are fine; for the app, something like *"Personal Android TV launcher, non-commercial"* and `http://localhost` as the URL.
-4. Copy either the **API Key** or the longer **API Read Access Token**. Both work.
-
-Without a key, the launcher simply hides the trending section.
-
-### 4. Configure and build the launcher
+### 3. Configure and build the launcher
 
 ```bash
 cd launcher
@@ -118,13 +110,10 @@ Edit `local.properties`:
 | Setting | What it does |
 |---|---|
 | `sdk.dir` | Path to the Android SDK (or set `ANDROID_HOME` instead) |
-| `tmdb.key` | Your TMDB key. Empty = no trending section |
-| `tmdb.region` | Two-letter country code (`IN`, `US`, `GB`…) used to pick the streaming app for the button. Empty = the TV's country setting. Set it if your TV's locale doesn't match where you live |
-| `tmdb.feed` | `all`, `movie` or `tv` |
 | `sports.leagues` | Leagues for the Sports row: `nfl`, `nba`, `wnba`, `mlb`, `nhl`, `cfb`, `cbb`, `mls`, `epl`. Empty (with no teams) = no Sports row. College leagues only show ranked teams' games, plus yours |
 | `sports.teams` | Your teams, shown first, as `league:ESPN abbreviation`, e.g. `nfl:TEN,epl:EVE`. If a team doesn't play today, its next game in the coming week is shown instead |
 
-`local.properties` is gitignored, so your key never ends up in a commit. Then build:
+`local.properties` is gitignored. Then build:
 
 ```bash
 ./gradlew assembleRelease
@@ -132,18 +121,18 @@ Edit `local.properties`:
 
 Always use the **release** build: it's optimised with R8, and debug Compose builds are noticeably slow on TV hardware.
 
-### 5. Install
+### 4. Install
 
 ```bash
 S=<tv-ip>:5555                    # or <tv-ip>:<port> if you used Wireless debugging
 adb -s $S install -r app/build/outputs/apk/release/app-release.apk
-adb -s $S shell pm grant me.prince.launcher android.permission.ACCESS_COARSE_LOCATION   # Wi-Fi name + weather
+adb -s $S shell pm grant me.prince.launcher android.permission.ACCESS_COARSE_LOCATION   # weather, sunrise and sunset
 adb -s $S shell appops set me.prince.launcher GET_USAGE_STATS allow                       # Recent row
 adb -s $S shell cmd package compile -m speed -f me.prince.launcher                       # faster cold start
 adb -s $S shell am start -n me.prince.launcher/.MainActivity                             # try it first
 ```
 
-### 6. Make it the home screen
+### 5. Make it the home screen
 
 Only once the launcher works:
 
@@ -161,8 +150,10 @@ adb -s $S shell pm disable-user --user 0 com.google.android.tvlauncher
 ## Customise
 
 - **Favourites:** long-press a tile → Move / Add to favourites / Remove. The order is saved on the TV. The defaults for a fresh install are at the top of `Apps.kt`.
+- **Appearance and wallpaper:** press the photo button in the header. Choices are saved on the TV.
+- **Wallpaper categories:** `WallpaperCategory` in `Wallpaper.kt` maps each choice to Commons categories of featured pictures. To skip a photo you don't want, add its file title to `EXCLUDED` in the same file.
+- **Colours:** `Theme.kt` holds the light and dark sets.
 - **OLED care:** set `OLED_CARE = false` at the top of `HomeScreen.kt` on an LCD TV.
-- **Streaming apps for the trending button:** add TMDB provider ids and Android TV package names to `PROVIDER_APPS` in `Trending.kt`.
 - **Font:** replace `res/font/inter.ttf` with any variable font that has `wght` and `opsz` axes.
 
 ## Undo everything
@@ -180,14 +171,15 @@ If the TV ever shows a black screen on Home, `adb -s <tv-ip>:5555 shell pm enabl
 
 - **The stock launcher wins Home.** It's a system app with a higher priority than yours, so `set-home-activity` alone often doesn't stick. Disable it, but only after your launcher is installed and tested, or you get a black screen.
 - **Disabling the stock launcher can break "Ok Google"** on TVs with a far-field (hands-free) mic. Android 11+ only lets a background app use the microphone if an app in the foreground lends it that permission, and the stock launcher was doing that for Google Assistant. This repo doesn't include a fix. The voice button on the remote keeps working either way. If hands-free "Ok Google" matters to you, check it after disabling the stock launcher (logcat shows `Request denied by app op: 27` when it's broken), or ask your coding agent to add a microphone-type foreground service that binds the Assistant with `BIND_INCLUDE_CAPABILITIES`.
-- **The Wi-Fi button says "Wi-Fi" instead of your network name**, and **there's no weather.** Both need location permission: run the `pm grant ... ACCESS_COARSE_LOCATION` line above. Weather also needs the TV to know its location; some streaming boxes don't, and then it's simply hidden.
-- **VPN ad blockers.** Apps like AdGuard run as a VPN, which makes the VPN the "active network". The launcher checks every network, so the Wi-Fi label still works.
+- **There's no weather, and Auto switches at 7 am and 7 pm.** Both need location permission, so run the `pm grant ... ACCESS_COARSE_LOCATION` line above. They also need the TV to know its location. Some streaming boxes don't, and then the weather is hidden and Auto keeps the 7 am to 7 pm fallback.
+- **No photo on the first start.** The launcher shows the plain background until the first photo has downloaded, and tries again every 15 seconds while it's offline.
 - **Firmware updates** can bring removed apps back. Re-run `./debloat.sh <tv-ip>`.
 
 ## Credits
 
-- Movie and TV data and images from [TMDB](https://www.themoviedb.org/). This product uses the TMDB API but is not endorsed or certified by TMDB.
+- Wallpapers from the featured pictures on [Wikimedia Commons](https://commons.wikimedia.org/). Each photo's author and licence (usually CC BY or CC BY-SA) are shown on screen while it's up.
 - Weather from [Open-Meteo](https://open-meteo.com/).
+- Sunrise and sunset from the equations behind [NOAA's solar calculator](https://gml.noaa.gov/grad/solcalc/).
 - [Inter](https://rsms.me/inter/) by Rasmus Andersson, under the SIL Open Font License (`launcher/third_party/Inter-OFL.txt`).
 
 ## Licence
