@@ -11,9 +11,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
@@ -21,7 +19,6 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawOutline
-import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -35,10 +32,8 @@ import androidx.compose.ui.node.GlobalPositionAwareModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.node.currentValueOf
 import androidx.compose.ui.node.invalidateDraw
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
@@ -130,15 +125,11 @@ fun DrawScope.drawGlassImage(image: ImageBitmap, bounds: Rect, origin: Offset, a
     }
 }
 
-// The wallpaper's glass copy: blurred, with Wallpaper()'s scrims cut out of its alpha. Drawn over the theme's
-// scrim colour it matches the screen in either theme, so a theme switch needs no new copy.
+// The wallpaper's glass copy, scrims and all. Like the photo, it goes over the theme's scrim colour, so a theme
+// switch needs no new copy.
 fun frostedWallpaper(photo: Bitmap): ImageBitmap {
     val (w, h, px) = blurredPixels(photo)
-    val image = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { setPixels(px, 0, w, 0, 0, w, h) }.asImageBitmap()
-    CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, Canvas(image), Size(w.toFloat(), h.toFloat())) {
-        wallpaperScrims(Color.Black).forEach { drawRect(it, blendMode = BlendMode.DstOut) }
-    }
-    return image
+    return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888).asImageBitmap()
 }
 
 // Small blurred copy of the window, for the glass behind the long-press menu and the panels

@@ -18,18 +18,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalConfiguration
@@ -37,6 +40,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
@@ -125,15 +129,17 @@ fun updateWallpaper(context: Context, prefs: HomePrefs, skip: Boolean = false): 
     }
 }
 
-// Centre-cropped to the aspect ratio of width x height and no bigger (never upscaled), uploaded ahead of drawing
+// Centre-cropped to the aspect ratio of width x height and no bigger (never upscaled). Mutable, with an alpha
+// channel for cutScrims().
 private fun decodeWallpaper(context: Context, photo: Photo, width: Int, height: Int): Bitmap? {
-    val source = BitmapFactory.decodeFile(photoFile(wallpaperDir(context), photo).path) ?: return null
+    val options = BitmapFactory.Options().apply { inMutable = true }
+    val source = BitmapFactory.decodeFile(photoFile(wallpaperDir(context), photo).path, options) ?: return null
     val crop = centreCrop(source.width, source.height, width, height)
     val scale = minOf(1f, width.toFloat() / crop.width)
     val matrix = Matrix().apply { setScale(scale, scale) }
     val bitmap = Bitmap.createBitmap(source, crop.x, crop.y, crop.width, crop.height, matrix, true)
     if (bitmap !== source) source.recycle()
-    bitmap.prepareToDraw()
+    bitmap.setHasAlpha(true)
     return bitmap
 }
 
@@ -351,7 +357,10 @@ class WallpaperImage(val photo: Photo, val image: ImageBitmap, val frosted: Imag
 // Blocking; null if the photo has since been replaced on disk
 fun loadWallpaperImage(context: Context, photo: Photo, size: IntSize): WallpaperImage? {
     val bitmap = decodeWallpaper(context, photo, size.width, size.height) ?: return null
-    return WallpaperImage(photo, bitmap.asImageBitmap(), frostedWallpaper(bitmap))
+    cutScrims(bitmap)
+    val frosted = frostedWallpaper(bitmap)
+    bitmap.prepareToDraw()
+    return WallpaperImage(photo, bitmap.asImageBitmap(), frosted)
 }
 
 @Stable
@@ -386,16 +395,18 @@ fun wallpaperSize(): IntSize {
     }
 }
 
-// Behind the header, the title and the shelves. In the photo's coordinates, so they parallax with it and
-// frostedWallpaper() can bake them in.
-fun wallpaperScrims(color: Color): List<Brush> {
-    // Fading through transparent black would turn a white scrim grey
-    fun scrim(alpha: Float) = color.copy(alpha = alpha)
-    return listOf(
-        Brush.verticalGradient(0f to scrim(0.65f), 0.3f to scrim(0f)),
-        Brush.horizontalGradient(0f to scrim(0.6f), 0.6f to scrim(0f)),
-        Brush.verticalGradient(0.45f to scrim(0f), 1f to scrim(0.7f)),
-    )
+// Cuts the scrims behind the header, the title and the shelves out of the photo's alpha. Drawn over the theme's
+// scrim colour it matches scrims drawn on top, in either theme, for one flat fill a frame instead of three
+// gradients. In the photo's coordinates, so they parallax with it and the frosted copy has them too.
+private fun cutScrims(photo: Bitmap) {
+    val image = photo.asImageBitmap()
+    CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, Canvas(image), Size(photo.width.toFloat(), photo.height.toFloat())) {
+        listOf(
+            Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.65f), 0.3f to Color.Transparent),
+            Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.6f), 0.6f to Color.Transparent),
+            Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.7f)),
+        ).forEach { drawRect(it, blendMode = BlendMode.DstOut) }
+    }
 }
 
 // fade: 0 at the top of the page, 1 once scrolled far enough to fully dim and lift the photo. Read only in
@@ -403,7 +414,6 @@ fun wallpaperScrims(color: Color): List<Brush> {
 @Composable
 fun Wallpaper(state: WallpaperState, photoSize: IntSize, fade: () -> Float) {
     val scrim = LocalColors.current.scrim
-    val scrims = remember(scrim) { wallpaperScrims(scrim) }
     val height = with(LocalDensity.current) { photoSize.height.toDp() }
     Box(Modifier.fillMaxSize()) {
         Spacer(
@@ -414,9 +424,9 @@ fun Wallpaper(state: WallpaperState, photoSize: IntSize, fade: () -> Float) {
                 .graphicsLayer { translationY = parallax(fade()) }
                 .drawBehind {
                     val dst = IntSize(size.width.roundToInt(), size.height.roundToInt())
+                    drawRect(scrim)
                     state.outgoing?.let { drawImage(it.image, dstSize = dst) }
                     state.shown?.let { drawImage(it.image, dstSize = dst, alpha = state.shownAlpha) }
-                    scrims.forEach { drawRect(it) }
                 }
         )
         Spacer(
