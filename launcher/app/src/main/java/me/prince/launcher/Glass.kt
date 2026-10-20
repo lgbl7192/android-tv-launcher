@@ -6,27 +6,31 @@ import android.os.Looper
 import android.view.PixelCopy
 import android.view.Window
 import androidx.compose.runtime.compositionLocalOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.foundation.border
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
+import androidx.compose.ui.node.DrawModifierNode
+import androidx.compose.ui.node.GlobalPositionAwareModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.currentValueOf
+import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -34,7 +38,8 @@ import kotlin.math.roundToInt
 
 // Android 11 has no real-time blur (RenderEffect is API 31), so glass samples a pre-blurred copy of
 // whatever is drawn behind it: the wallpaper on the home screen, a screen capture behind the menu.
-class GlassSource(val image: ImageBitmap, val bounds: Rect, val alpha: Float = 1f)
+// Bounds and alpha are lambdas so scroll-driven parallax and fades are read while drawing, not composing.
+class GlassSource(val image: ImageBitmap, val bounds: () -> Rect, val alpha: () -> Float = { 1f })
 
 val LocalGlassSource = compositionLocalOf<GlassSource?> { null }
 
@@ -44,35 +49,68 @@ private const val BLUR_PASSES = 3
 
 // Frosted surface: blurred backdrop lined up with what's behind it, a milky lift, a specular top
 // highlight and a light rim that's brighter at the top-left, like light catching the edge.
-fun Modifier.glass(shape: Shape, enabled: Boolean = true): Modifier = composed {
-    val source = LocalGlassSource.current
-    var origin by remember { mutableStateOf(Offset.Zero) }
-    if (!enabled) return@composed this
-    this
-        .onGloballyPositioned { origin = it.positionInRoot() }
-        .clip(shape)
-        .drawBehind {
-            if (source != null) drawGlassSource(source, origin)
-            drawRect(Color.White.copy(alpha = 0.09f))
-            drawRect(Brush.verticalGradient(0f to Color.White.copy(alpha = 0.16f), 0.5f to Color.Transparent))
+fun Modifier.glass(shape: Shape, enabled: Boolean = true): Modifier =
+    if (enabled) clip(shape).then(GlassElement(shape)) else this
+
+private data class GlassElement(val shape: Shape) : ModifierNodeElement<GlassNode>() {
+    override fun create() = GlassNode(shape)
+
+    override fun update(node: GlassNode) {
+        node.shape = shape
+    }
+}
+
+private val GlassFill = Color.White.copy(alpha = 0.09f)
+private val GlassHighlight = Brush.verticalGradient(0f to Color.White.copy(alpha = 0.16f), 0.5f to Color.Transparent)
+private val GlassRim = Brush.linearGradient(
+    listOf(Color.White.copy(alpha = 0.5f), Color.White.copy(alpha = 0.08f), Color.White.copy(alpha = 0.22f)),
+)
+
+private class GlassNode(shape: Shape) :
+    Modifier.Node(), DrawModifierNode, GlobalPositionAwareModifierNode, CompositionLocalConsumerModifierNode {
+    var shape = shape
+        set(value) {
+            field = value
+            outline = null
+            invalidateDraw()
         }
-        .border(
-            1.dp,
-            Brush.linearGradient(
-                listOf(Color.White.copy(alpha = 0.5f), Color.White.copy(alpha = 0.08f), Color.White.copy(alpha = 0.22f)),
-            ),
-            shape,
-        )
+    private var origin = Offset.Zero
+    private var outline: Outline? = null
+    private var outlineSize = Size.Unspecified
+
+    override fun onGloballyPositioned(coordinates: LayoutCoordinates) {
+        val position = coordinates.positionInRoot()
+        if (position == origin) return
+        origin = position
+        // Without a source nothing behind the glass shifts when it moves
+        if (currentValueOf(LocalGlassSource) != null) invalidateDraw()
+    }
+
+    override fun ContentDrawScope.draw() {
+        currentValueOf(LocalGlassSource)?.let { drawGlassSource(it, origin) }
+        drawRect(GlassFill)
+        drawRect(GlassHighlight)
+        drawContent()
+        // Inset by half the stroke so the clip doesn't cut the rim in half
+        val stroke = 1.dp.toPx()
+        val rim = outline.takeIf { outlineSize == size }
+            ?: shape.createOutline(Size(size.width - stroke, size.height - stroke), layoutDirection, this).also {
+                outline = it
+                outlineSize = size
+            }
+        translate(stroke / 2, stroke / 2) { drawOutline(rim, GlassRim, style = Stroke(stroke)) }
+    }
 }
 
 // The part of the source behind a surface whose top-left sits at origin (root coordinates)
 fun DrawScope.drawGlassSource(source: GlassSource, origin: Offset, alpha: Float = 1f) {
+    val bounds = source.bounds()
     translate(-origin.x, -origin.y) {
         drawImage(
             source.image,
-            dstOffset = IntOffset(source.bounds.left.roundToInt(), source.bounds.top.roundToInt()),
-            dstSize = IntSize(source.bounds.width.roundToInt(), source.bounds.height.roundToInt()),
-            alpha = alpha * source.alpha,
+            dstOffset = IntOffset(bounds.left.roundToInt(), bounds.top.roundToInt()),
+            dstSize = IntSize(bounds.width.roundToInt(), bounds.height.roundToInt()),
+            alpha = alpha * source.alpha(),
             filterQuality = FilterQuality.Low,
         )
     }

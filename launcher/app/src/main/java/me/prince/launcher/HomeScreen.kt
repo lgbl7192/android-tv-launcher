@@ -56,6 +56,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -244,8 +248,8 @@ fun HomeScreen(
         firstTile.requestFocusWhenAttached()
     }
 
-    val shownApp = focusedApp ?: favourites.firstOrNull() ?: apps.firstOrNull()
-    val glow by animateColorAsState(shownApp?.glow ?: Background, tween(600), label = "glow")
+    // Only the title and the glow read this, so moving focus recomposes just them
+    val shownApp = { focusedApp ?: favourites.firstOrNull() ?: apps.firstOrNull() }
 
     var games by remember { mutableStateOf(emptyList<Game>()) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -273,12 +277,15 @@ fun HomeScreen(
     val now = rememberNow()
     var keyPresses by remember { mutableIntStateOf(0) }
     var idle by remember { mutableStateOf(false) }
-    LaunchedEffect(keyPresses, resumes) {
-        idle = false
-        delay(IDLE_DIM_MS)
-        idle = true
+    LaunchedEffect(resumes) {
+        // Read here rather than as an effect key, so a key press doesn't recompose the whole screen
+        snapshotFlow { keyPresses }.collectLatest {
+            idle = false
+            delay(IDLE_DIM_MS)
+            idle = true
+        }
     }
-    val night = now.hour >= 22 || now.hour < 6
+    val night by remember { derivedStateOf { now.value.hour >= 22 || now.value.hour < 6 } }
     val idleDim = if (OLED_CARE && idle) IDLE_DIM else 0f
     val nightDim = if (OLED_CARE && night) NIGHT_DIM else 0f
     val dim by animateFloatAsState(
@@ -333,20 +340,8 @@ fun HomeScreen(
                         drawContent()
                         if (dim > 0f) drawRect(Color.Black.copy(alpha = dim))
                     }
-                    .background(Background)
-                    .drawBehind {
-                        drawRect(
-                            Brush.radialGradient(
-                                0f to glow.copy(alpha = 0.9f),
-                                0.45f to glow.copy(alpha = 0.3f),
-                                1f to Color.Transparent,
-                                center = Offset(size.width * 0.36f, size.height * 0.42f),
-                                radius = size.width * 0.6f,
-                            )
-                        )
-                        drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))))
-                    }
             ) {
+                Ambient { shownApp()?.glow }
                 CompositionLocalProvider(LocalBringIntoViewSpec provides verticalScrollSpec) {
                 Column(
                     Modifier
@@ -358,7 +353,7 @@ fun HomeScreen(
                 CompositionLocalProvider(LocalBringIntoViewSpec provides rowScrollSpec) {
                     Spacer(Modifier.height(with(density) { barHeight.toDp() }))
                     Spacer(Modifier.height(118.dp))
-                    AppTitle(shownApp?.label.orEmpty(), moving = movingId != null)
+                    AppTitle({ shownApp()?.label.orEmpty() }, moving = movingId != null)
                     val onFocused = { app: TvApp -> focusedApp = app }
                     favourites.chunked(favouritesPerRow).forEachIndexed { row, rowApps ->
                         Shelf(
@@ -396,7 +391,7 @@ fun HomeScreen(
                     below = page,
                 ) {
                     Header(
-                        now = now,
+                        clock = { now.value },
                         onInputs = { openPanel(Panel.Inputs) }.takeIf { inputs.isNotEmpty() },
                         onAllApps = { openPanel(Panel.AllApps) },
                         allAppsFocus = firstTile.takeIf { favourites.isEmpty() },
@@ -475,11 +470,34 @@ internal suspend fun FocusRequester.requestFocusWhenAttached() {
     }
 }
 
+// Background, the focused app's colour glowing behind the shelves, and a scrim along the bottom
 @Composable
-private fun AppTitle(label: String, moving: Boolean) {
+private fun Ambient(glow: () -> Color?) {
+    val color by animateColorAsState(glow() ?: Background, tween(600), label = "glow")
+    Box(
+        Modifier
+            .fillMaxSize()
+            .drawBehind {
+                drawRect(Background)
+                drawRect(
+                    Brush.radialGradient(
+                        0f to color.copy(alpha = 0.9f),
+                        0.45f to color.copy(alpha = 0.3f),
+                        1f to Color.Transparent,
+                        center = Offset(size.width * 0.36f, size.height * 0.42f),
+                        radius = size.width * 0.6f,
+                    )
+                )
+                drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))))
+            }
+    )
+}
+
+@Composable
+private fun AppTitle(label: () -> String, moving: Boolean) {
     Row(Modifier.padding(horizontal = EdgePadding), verticalAlignment = Alignment.Bottom) {
         Text(
-            text = label,
+            text = label(),
             color = TextPrimary,
             fontSize = 44.sp,
             fontFamily = UiDisplay,
@@ -569,20 +587,17 @@ private fun minimalScroll(margin: Float, topInset: Float = 0f) = object : BringI
 
 // Ticks on the minute boundary
 @Composable
-private fun rememberNow(): LocalDateTime {
-    val now by produceState(LocalDateTime.now()) {
-        while (true) {
-            value = LocalDateTime.now()
-            delay(60_000 - System.currentTimeMillis() % 60_000)
-        }
+private fun rememberNow(): State<LocalDateTime> = produceState(LocalDateTime.now()) {
+    while (true) {
+        value = LocalDateTime.now()
+        delay(60_000 - System.currentTimeMillis() % 60_000)
     }
-    return now
 }
 
 // Null callbacks hide their pill
 @Composable
 private fun Header(
-    now: LocalDateTime,
+    clock: () -> LocalDateTime,
     onInputs: (() -> Unit)?,
     onAllApps: () -> Unit,
     allAppsFocus: FocusRequester?,
@@ -590,6 +605,7 @@ private fun Header(
     onPicture: (() -> Unit)?,
     onSound: (() -> Unit)?,
 ) {
+    val now = clock()
     val context = LocalContext.current
     val is24h = DateFormat.is24HourFormat(context)
     val weather by produceState<Weather?>(null) {
