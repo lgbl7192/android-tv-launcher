@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.BorderStroke
@@ -218,6 +219,7 @@ fun HomeScreen(
     val favouriteRows = remember { List(FAVOURITE_ROWS) { LazyListState() } }
     val firstTile = remember { FocusRequester() }
     val movingTile = remember { FocusRequester() }
+    val page = remember { FocusRequester() }
 
     LaunchedEffect(reloadKey) {
         apps = withContext(Dispatchers.IO) { loadApps(context) }
@@ -300,6 +302,10 @@ fun HomeScreen(
             // A network blip at boot shouldn't hide the row for six hours
             delay(if (trending.isEmpty()) TRENDING_RETRY_MS else TRENDING_REFRESH_MS)
         }
+    }
+    // Minimal scroll would leave the hero's title under the pinned bar
+    LaunchedEffect(heroFocused) {
+        if (heroFocused) scroll.animateScrollTo(0)
     }
     LaunchedEffect(heroIndex, heroFocused, trending) {
         if (heroFocused || trending.size < 2) return@LaunchedEffect
@@ -488,6 +494,7 @@ fun HomeScreen(
                     Modifier
                         .fillMaxSize()
                         .offset { shift }
+                        .focusRequester(page)
                         .verticalScroll(scroll)
                 ) {
                 CompositionLocalProvider(LocalBringIntoViewSpec provides rowScrollSpec) {
@@ -553,6 +560,7 @@ fun HomeScreen(
                     alpha = { (scroll.value / barFadeDistance).coerceIn(0f, 1f) },
                     shift = { shift },
                     onHeight = { barHeight = it },
+                    below = page,
                 ) {
                     Header(now, onWifi, onSettings, onPicture, onSound)
                 }
@@ -903,11 +911,18 @@ private fun TopBar(
     alpha: () -> Float,
     shift: () -> IntOffset,
     onHeight: (Int) -> Unit,
+    below: FocusRequester,
     content: @Composable () -> Unit,
 ) {
     Column(
         Modifier
             .fillMaxWidth()
+            // The page scrolls behind the bar, so its focus group starts above the pills and Down search never picks it
+            .onKeyEvent {
+                if (it.type != KeyEventType.KeyDown || it.key != Key.DirectionDown) return@onKeyEvent false
+                below.requestFocus()
+                true
+            }
             .onSizeChanged { onHeight(it.height) }
             .drawBehind {
                 val a = alpha()
