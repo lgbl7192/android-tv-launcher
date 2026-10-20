@@ -14,6 +14,7 @@ import java.io.IOException
 import java.net.URL
 import java.time.Instant
 import java.time.OffsetDateTime
+import java.time.format.DateTimeParseException
 
 private const val TAG = "Sports"
 private const val API = "https://site.api.espn.com/apis/site/v2/sports"
@@ -204,7 +205,7 @@ private fun parseEvent(event: JSONObject, league: String): RawGame? {
     val detail = if (state == GameState.Final && shortDetail.startsWith("FT")) "Final" + shortDetail.removePrefix("FT") else shortDetail
     val start = try {
         OffsetDateTime.parse(event.optString("date")).toInstant()
-    } catch (e: java.time.format.DateTimeParseException) {
+    } catch (e: DateTimeParseException) {
         return null
     }
     val broadcasts = competition.optJSONArray("broadcasts").objects()

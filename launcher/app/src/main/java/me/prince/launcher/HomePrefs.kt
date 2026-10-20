@@ -26,10 +26,6 @@ data class HomePrefs(
     val categories: Set<WallpaperCategory> = WallpaperCategory.entries.toSet(),
     val interval: ChangeInterval = ChangeInterval.FifteenMinutes,
 ) {
-    init {
-        require(categories.isNotEmpty()) { "At least one wallpaper category stays on" }
-    }
-
     fun toggle(category: WallpaperCategory): HomePrefs {
         val toggled = if (category in categories) categories - category else categories + category
         return if (toggled.isEmpty()) this else copy(categories = toggled)
