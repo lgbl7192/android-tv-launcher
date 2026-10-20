@@ -28,7 +28,7 @@ private val DEFAULT_FAVOURITES = listOf(
     "com.apple.atve.androidtv.appletv",   // Apple TV
 )
 
-private const val PREFS = "launcher"
+internal const val PREFS = "launcher"
 private const val KEY_FAVOURITES = "favourites"
 private const val RECENT_DAYS = 14L
 
