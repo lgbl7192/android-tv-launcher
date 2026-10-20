@@ -398,52 +398,52 @@ fun HomeScreen(
                     )
                 }
             }
-        }
 
-        panel?.let { (kind, backdrop) ->
-            val launchAndClose = { app: TvApp ->
-                onLaunch(app)
-                panel = null
+            panel?.let { (kind, backdrop) ->
+                val launchAndClose = { app: TvApp ->
+                    onLaunch(app)
+                    panel = null
+                }
+                when (kind) {
+                    Panel.AllApps -> AppGridPanel(
+                        "All apps", apps, FavouriteTileWidth, FavouriteTileHeight, FavouriteTileShape, backdrop,
+                        onLaunch = launchAndClose,
+                        onMenu = { app, from -> openMenu(app, canMove = false, from) },
+                        onDismiss = { panel = null },
+                    )
+                    Panel.Inputs -> AppGridPanel(
+                        "Inputs", inputs, TileWidth, TileHeight, TileShape, backdrop,
+                        onLaunch = launchAndClose,
+                        onMenu = { _, _ -> },
+                        onDismiss = { panel = null },
+                    )
+                }
             }
-            when (kind) {
-                Panel.AllApps -> AppGridPanel(
-                    "All apps", apps, FavouriteTileWidth, FavouriteTileHeight, FavouriteTileShape, backdrop,
-                    onLaunch = launchAndClose,
-                    onMenu = { app, from -> openMenu(app, canMove = false, from) },
-                    onDismiss = { panel = null },
-                )
-                Panel.Inputs -> AppGridPanel(
-                    "Inputs", inputs, TileWidth, TileHeight, TileShape, backdrop,
-                    onLaunch = launchAndClose,
-                    onMenu = { _, _ -> },
-                    onDismiss = { panel = null },
-                )
-            }
-        }
 
-        menu?.let { (app, canMove, backdrop) ->
-            val isFavourite = app.packageName in favouriteIds
-            AppMenu(
-                app = app,
-                backdrop = backdrop,
-                isFavourite = isFavourite,
-                canMove = canMove,
-                onDismiss = { menu = null },
-                onMove = {
-                    menu = null
-                    movingId = app.packageName
-                },
-                onToggleFavourite = {
-                    menu = null
-                    updateFavourites(if (isFavourite) favouriteIds - app.packageName else favouriteIds + app.packageName)
-                    // The focused tile just jumped rows (or vanished); start again from the first tile
-                    refocus++
-                },
-                onAppInfo = {
-                    menu = null
-                    onAppInfo(app)
-                },
-            )
+            menu?.let { (app, canMove, backdrop) ->
+                val isFavourite = app.packageName in favouriteIds
+                AppMenu(
+                    app = app,
+                    backdrop = backdrop,
+                    isFavourite = isFavourite,
+                    canMove = canMove,
+                    onDismiss = { menu = null },
+                    onMove = {
+                        menu = null
+                        movingId = app.packageName
+                    },
+                    onToggleFavourite = {
+                        menu = null
+                        updateFavourites(if (isFavourite) favouriteIds - app.packageName else favouriteIds + app.packageName)
+                        // The focused tile just jumped rows (or vanished); start again from the first tile
+                        refocus++
+                    },
+                    onAppInfo = {
+                        menu = null
+                        onAppInfo(app)
+                    },
+                )
+            }
         }
     }
     }
