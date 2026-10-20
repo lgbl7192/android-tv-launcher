@@ -107,11 +107,6 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-// Pure black switches OLED pixels off entirely
-private val Background = Color.Black
-internal val TextPrimary = Color.White
-private val TextSecondary = Color.White.copy(alpha = 0.75f)
-
 internal val TileWidth = 200.dp
 internal val TileHeight = 112.dp
 // Five across on a 960dp-wide screen, in two rows
@@ -151,6 +146,7 @@ fun HomeScreen(
     reloadKey: Int,
     homePresses: Int,
     resumes: Int,
+    light: Boolean,
     onLaunch: (TvApp) -> Unit,
     onAppInfo: (TvApp) -> Unit,
     onSettings: () -> Unit,
@@ -316,6 +312,7 @@ fun HomeScreen(
     val barFadeDistance = with(density) { BarFadeDistance.toPx() }
 
     MaterialTheme(colorScheme = darkColorScheme()) {
+    LauncherTheme(light) {
         CompositionLocalProvider(
             LocalBringIntoViewSpec provides rowScrollSpec,
             LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = UiText),
@@ -449,6 +446,7 @@ fun HomeScreen(
             )
         }
     }
+    }
 }
 
 private fun LazyListState.isFullyVisible(index: Int): Boolean {
@@ -473,32 +471,34 @@ internal suspend fun FocusRequester.requestFocusWhenAttached() {
 // Background, the focused app's colour glowing behind the shelves, and a scrim along the bottom
 @Composable
 private fun Ambient(glow: () -> Color?) {
-    val color by animateColorAsState(glow() ?: Background, tween(600), label = "glow")
+    val colors = LocalColors.current
+    val color by animateColorAsState(glow() ?: colors.background, tween(600), label = "glow")
     Box(
         Modifier
             .fillMaxSize()
             .drawBehind {
-                drawRect(Background)
+                drawRect(colors.background)
                 drawRect(
                     Brush.radialGradient(
-                        0f to color.copy(alpha = 0.9f),
-                        0.45f to color.copy(alpha = 0.3f),
+                        0f to color.copy(alpha = 0.9f * colors.glowStrength),
+                        0.45f to color.copy(alpha = 0.3f * colors.glowStrength),
                         1f to Color.Transparent,
                         center = Offset(size.width * 0.36f, size.height * 0.42f),
                         radius = size.width * 0.6f,
                     )
                 )
-                drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))))
+                drawRect(Brush.verticalGradient(listOf(Color.Transparent, colors.scrim.copy(alpha = 0.55f))))
             }
     )
 }
 
 @Composable
 private fun AppTitle(label: () -> String, moving: Boolean) {
+    val colors = LocalColors.current
     Row(Modifier.padding(horizontal = EdgePadding), verticalAlignment = Alignment.Bottom) {
         Text(
             text = label(),
-            color = TextPrimary,
+            color = colors.textPrimary,
             fontSize = 44.sp,
             fontFamily = UiDisplay,
             fontWeight = FontWeight.SemiBold,
@@ -510,7 +510,7 @@ private fun AppTitle(label: () -> String, moving: Boolean) {
             Spacer(Modifier.width(20.dp))
             Text(
                 "◀ ▶ to move, OK to finish",
-                color = TextSecondary,
+                color = colors.textSecondary,
                 fontSize = 15.sp,
                 modifier = Modifier.padding(bottom = 10.dp),
             )
@@ -522,7 +522,7 @@ private fun AppTitle(label: () -> String, moving: Boolean) {
 private fun ShelfLabel(text: String) {
     Text(
         text,
-        color = TextPrimary.copy(alpha = 0.92f),
+        color = LocalColors.current.textPrimary.copy(alpha = 0.92f),
         fontSize = 19.sp,
         fontWeight = FontWeight.SemiBold,
         modifier = Modifier.padding(start = EdgePadding, top = 14.dp),
@@ -554,7 +554,7 @@ private fun AppMenu(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)) {
                 Image(app.image, contentDescription = null, modifier = Modifier.size(56.dp, 32.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
                 Spacer(Modifier.width(12.dp))
-                Text(app.label, color = TextPrimary, fontSize = 20.sp, fontFamily = UiDisplay, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(app.label, color = LocalColors.current.textPrimary, fontSize = 20.sp, fontFamily = UiDisplay, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             val itemModifier = Modifier.fillMaxWidth()
             if (canMove) Pill(null, "Move", onMove, itemModifier.focusRequester(firstItem), fillWidth = true)
@@ -606,6 +606,7 @@ private fun Header(
     onSound: (() -> Unit)?,
 ) {
     val now = clock()
+    val colors = LocalColors.current
     val context = LocalContext.current
     val is24h = DateFormat.is24HourFormat(context)
     val weather by produceState<Weather?>(null) {
@@ -619,7 +620,7 @@ private fun Header(
         Row {
             Text(
                 now.format(DateTimeFormatter.ofPattern(if (is24h) "HH:mm" else "h:mm")),
-                color = TextPrimary,
+                color = colors.textPrimary,
                 fontSize = 54.sp,
                 fontFamily = UiDisplay,
                 fontWeight = FontWeight.Light,
@@ -628,7 +629,7 @@ private fun Header(
             if (!is24h) {
                 Text(
                     " " + now.format(DateTimeFormatter.ofPattern("a")).uppercase(),
-                    color = TextSecondary,
+                    color = colors.textSecondary,
                     fontSize = 18.sp,
                     modifier = Modifier.alignByBaseline(),
                 )
@@ -637,11 +638,11 @@ private fun Header(
         Spacer(Modifier.width(20.dp))
         // Gives way to the pills on TVs that show all six
         Column(Modifier.weight(1f)) {
-            Text(greeting(now.hour), color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            Text(greeting(now.hour), color = colors.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
             val weatherText = weather?.let { "  ·  ${it.temperature}° ${it.summary}" }.orEmpty()
             Text(
                 now.format(DateTimeFormatter.ofPattern("EEEE d MMMM")) + weatherText,
-                color = TextSecondary,
+                color = colors.textSecondary,
                 fontSize = 15.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -674,6 +675,7 @@ private fun TopBar(
     content: @Composable () -> Unit,
 ) {
     val source = LocalGlassSource.current
+    val colors = LocalColors.current
     Column(
         Modifier
             .fillMaxWidth()
@@ -688,12 +690,12 @@ private fun TopBar(
                 val a = alpha()
                 if (a == 0f) return@drawBehind
                 // Hide the sharp page underneath first
-                drawRect(Color.Black.copy(alpha = a))
+                drawRect(colors.background, alpha = a)
                 source?.let { drawGlassSource(it, Offset.Zero, a) }
-                drawRect(Color.Black.copy(alpha = 0.25f * a))
-                drawRect(Color.White.copy(alpha = 0.06f * a))
+                drawRect(colors.scrim, alpha = 0.25f * a)
+                drawRect(colors.glassFill, alpha = 0.66f * a)
                 val edge = 1.dp.toPx()
-                drawRect(Color.White.copy(alpha = 0.24f * a), topLeft = Offset(0f, size.height - edge), size = Size(size.width, edge))
+                drawRect(colors.divider, topLeft = Offset(0f, size.height - edge), size = Size(size.width, edge), alpha = a)
             }
             .offset { shift() }
     ) {
@@ -719,18 +721,19 @@ internal fun Pill(
     fillWidth: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val colors = LocalColors.current
     Surface(
         onClick = onClick,
         modifier = modifier.onFocusChanged { focused = it.isFocused },
         shape = ClickableSurfaceDefaults.shape(CircleShape),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
-            contentColor = TextPrimary,
+            contentColor = colors.textPrimary,
             focusedContainerColor = Color.White,
             focusedContentColor = Color.Black,
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
-        glow = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color.White.copy(alpha = 0.25f), 12.dp)),
+        glow = ClickableSurfaceDefaults.glow(focusedGlow = Glow(colors.focusGlow, 12.dp)),
     ) {
         Row(
             Modifier
@@ -822,6 +825,7 @@ private fun FocusTile(
     content: @Composable () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val colors = LocalColors.current
     val sheen = remember { Animatable(1f) }
     LaunchedEffect(focused) {
         if (focused) {
@@ -841,8 +845,8 @@ private fun FocusTile(
             focusedContainerColor = Color.Transparent,
         ),
         border = ClickableSurfaceDefaults.border(
-            border = Border(BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)), shape = shape),
-            focusedBorder = Border(BorderStroke(1.5.dp, Color.White.copy(alpha = 0.6f)), shape = shape),
+            border = Border(BorderStroke(1.dp, colors.tileBorder), shape = shape),
+            focusedBorder = Border(BorderStroke(1.5.dp, colors.tileBorderFocused), shape = shape),
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
         glow = ClickableSurfaceDefaults.glow(focusedGlow = Glow(glow.copy(alpha = 0.55f), 20.dp)),
@@ -898,6 +902,7 @@ private fun SportsShelf(games: List<Game>, onOpen: (Intent) -> Unit) {
 // Away team over home team, then the clock or start time and the network
 @Composable
 private fun ScoreCard(game: Game) {
+    val colors = LocalColors.current
     val context = LocalContext.current
     val live = game.state == GameState.Live
     val status = when (game.state) {
@@ -915,7 +920,7 @@ private fun ScoreCard(game: Game) {
                 .padding(vertical = 18.dp)
                 .width(3.dp)
                 .fillMaxHeight()
-                .background(if (game.isMine) Color.White.copy(alpha = 0.85f) else Color.Transparent, CircleShape)
+                .background(if (game.isMine) colors.textPrimary.copy(alpha = 0.85f) else Color.Transparent, CircleShape)
         )
         Column(Modifier.fillMaxSize().padding(start = 11.dp, end = 14.dp, top = 12.dp, bottom = 10.dp)) {
             val showScore = game.state != GameState.Upcoming
@@ -930,7 +935,7 @@ private fun ScoreCard(game: Game) {
                 }
                 Text(
                     status,
-                    color = if (live) TextPrimary else TextSecondary,
+                    color = if (live) colors.textPrimary else colors.textSecondary,
                     fontSize = 13.sp,
                     fontWeight = if (live) FontWeight.SemiBold else FontWeight.Normal,
                     maxLines = 1,
@@ -938,7 +943,7 @@ private fun ScoreCard(game: Game) {
                     modifier = Modifier.weight(1f),
                 )
                 game.network?.let {
-                    Text(it, color = TextSecondary, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(start = 8.dp))
+                    Text(it, color = colors.textSecondary, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(start = 8.dp))
                 }
             }
         }
@@ -947,7 +952,8 @@ private fun ScoreCard(game: Game) {
 
 @Composable
 private fun TeamLine(side: Side, showScore: Boolean, dim: Boolean) {
-    val color = if (dim) TextSecondary else TextPrimary
+    val colors = LocalColors.current
+    val color = if (dim) colors.textSecondary else colors.textPrimary
     Row(Modifier.height(26.dp), verticalAlignment = Alignment.CenterVertically) {
         if (side.logo != null) {
             Image(side.logo, contentDescription = null, modifier = Modifier.size(24.dp))
@@ -966,6 +972,7 @@ private fun TeamLine(side: Side, showScore: Boolean, dim: Boolean) {
 // Inputs and apps without a TV banner: icon top-left, name and detail bottom-left on glass
 @Composable
 private fun GlassTileContent(app: TvApp, shape: RoundedCornerShape) {
+    val colors = LocalColors.current
     Column(
         Modifier
             .fillMaxSize()
@@ -974,9 +981,9 @@ private fun GlassTileContent(app: TvApp, shape: RoundedCornerShape) {
     ) {
         Image(app.image, contentDescription = null, modifier = Modifier.size(30.dp))
         Spacer(Modifier.weight(1f))
-        Text(app.label, color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(app.label, color = colors.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (app.detail != null) {
-            Text(app.detail, color = TextSecondary, fontSize = 13.sp, maxLines = 1)
+            Text(app.detail, color = colors.textSecondary, fontSize = 13.sp, maxLines = 1)
         }
     }
 }

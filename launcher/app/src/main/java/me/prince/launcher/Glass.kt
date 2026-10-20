@@ -60,12 +60,6 @@ private data class GlassElement(val shape: Shape) : ModifierNodeElement<GlassNod
     }
 }
 
-private val GlassFill = Color.White.copy(alpha = 0.09f)
-private val GlassHighlight = Brush.verticalGradient(0f to Color.White.copy(alpha = 0.16f), 0.5f to Color.Transparent)
-private val GlassRim = Brush.linearGradient(
-    listOf(Color.White.copy(alpha = 0.5f), Color.White.copy(alpha = 0.08f), Color.White.copy(alpha = 0.22f)),
-)
-
 private class GlassNode(shape: Shape) :
     Modifier.Node(), DrawModifierNode, GlobalPositionAwareModifierNode, CompositionLocalConsumerModifierNode {
     var shape = shape
@@ -77,6 +71,9 @@ private class GlassNode(shape: Shape) :
     private var origin = Offset.Zero
     private var outline: Outline? = null
     private var outlineSize = Size.Unspecified
+    private var colors: LauncherColors? = null
+    private lateinit var highlight: Brush
+    private lateinit var rim: Brush
 
     override fun onGloballyPositioned(coordinates: LayoutCoordinates) {
         val position = coordinates.positionInRoot()
@@ -87,18 +84,24 @@ private class GlassNode(shape: Shape) :
     }
 
     override fun ContentDrawScope.draw() {
+        val theme = currentValueOf(LocalColors)
+        if (theme !== colors) {
+            colors = theme
+            highlight = Brush.verticalGradient(0f to theme.glassHighlight, 0.5f to Color.Transparent)
+            rim = Brush.linearGradient(theme.glassRim)
+        }
         currentValueOf(LocalGlassSource)?.let { drawGlassSource(it, origin) }
-        drawRect(GlassFill)
-        drawRect(GlassHighlight)
+        drawRect(theme.glassFill)
+        drawRect(highlight)
         drawContent()
         // Inset by half the stroke so the clip doesn't cut the rim in half
         val stroke = 1.dp.toPx()
-        val rim = outline.takeIf { outlineSize == size }
+        val edge = outline.takeIf { outlineSize == size }
             ?: shape.createOutline(Size(size.width - stroke, size.height - stroke), layoutDirection, this).also {
                 outline = it
                 outlineSize = size
             }
-        translate(stroke / 2, stroke / 2) { drawOutline(rim, GlassRim, style = Stroke(stroke)) }
+        translate(stroke / 2, stroke / 2) { drawOutline(edge, rim, style = Stroke(stroke)) }
     }
 }
 

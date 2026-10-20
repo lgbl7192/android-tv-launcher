@@ -24,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -54,7 +53,7 @@ internal fun GlassDialog(
             if (backdrop != null) {
                 Image(backdrop, contentDescription = null, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize())
             }
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
+            Box(Modifier.fillMaxSize().background(LocalColors.current.scrim.copy(alpha = 0.35f)))
             val source = remember(backdrop, bounds) { backdrop?.let { GlassSource(it, { bounds }) } }
             CompositionLocalProvider(LocalGlassSource provides source) {
                 content()
@@ -83,7 +82,7 @@ internal fun AppGridPanel(
         Column(Modifier.fillMaxSize().padding(top = 48.dp)) {
             Text(
                 title,
-                color = TextPrimary,
+                color = LocalColors.current.textPrimary,
                 fontSize = 34.sp,
                 fontFamily = UiDisplay,
                 fontWeight = FontWeight.SemiBold,
