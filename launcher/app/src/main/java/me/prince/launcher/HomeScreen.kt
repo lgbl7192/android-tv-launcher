@@ -1,16 +1,9 @@
 package me.prince.launcher
 
-import android.content.Context
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.foundation.layout.BoxWithConstraints
 import android.app.Activity
+import android.view.Window
 import android.content.Intent
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.wifi.WifiManager
 import android.text.format.DateFormat
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.animateColorAsState
@@ -59,7 +52,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -96,7 +88,6 @@ import androidx.tv.material3.darkColorScheme
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -114,19 +105,19 @@ import java.time.format.DateTimeFormatter
 
 // Pure black switches OLED pixels off entirely
 private val Background = Color.Black
-private val TextPrimary = Color.White
+internal val TextPrimary = Color.White
 private val TextSecondary = Color.White.copy(alpha = 0.75f)
 
-private val TileWidth = 200.dp
-private val TileHeight = 112.dp
+internal val TileWidth = 200.dp
+internal val TileHeight = 112.dp
 // Five across on a 960dp-wide screen, in two rows
-private val FavouriteTileWidth = 150.dp
-private val FavouriteTileHeight = 84.dp
+internal val FavouriteTileWidth = 150.dp
+internal val FavouriteTileHeight = 84.dp
 private const val FAVOURITE_ROWS = 2
-private val TileShape = RoundedCornerShape(14.dp)
-private val FavouriteTileShape = RoundedCornerShape(12.dp)
+internal val TileShape = RoundedCornerShape(14.dp)
+internal val FavouriteTileShape = RoundedCornerShape(12.dp)
 // Left/right margin for text; rows use it as content padding so tiles can run off the screen edge
-private val EdgePadding = 56.dp
+internal val EdgePadding = 56.dp
 
 // OLED burn-in care: static UI drifts a few px, dims when idle and at night. Set to false on LCD TVs.
 private const val OLED_CARE = true
@@ -147,7 +138,8 @@ private val BarFadeDistance = 40.dp
 private val ScoreCardWidth = 240.dp
 private val LiveRed = Color(0xFFFF453A)
 
-private data class MenuTarget(val app: TvApp, val canMove: Boolean)
+private data class MenuTarget(val app: TvApp, val canMove: Boolean, val backdrop: ImageBitmap?)
+private data class OpenPanel(val panel: Panel, val backdrop: ImageBitmap?)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -157,7 +149,6 @@ fun HomeScreen(
     resumes: Int,
     onLaunch: (TvApp) -> Unit,
     onAppInfo: (TvApp) -> Unit,
-    onWifi: () -> Unit,
     onSettings: () -> Unit,
     // Null hides the button (no working settings screen on this TV)
     onPicture: (() -> Unit)?,
@@ -172,14 +163,14 @@ fun HomeScreen(
     var inputs by remember { mutableStateOf(emptyList<TvApp>()) }
     var focusedApp by remember { mutableStateOf<TvApp?>(null) }
     var menu by remember { mutableStateOf<MenuTarget?>(null) }
-    var menuBackdrop by remember { mutableStateOf<ImageBitmap?>(null) }
+    var panel by remember { mutableStateOf<OpenPanel?>(null) }
     val window = (context as Activity).window
-    // Capture and blur the screen first so the menu opens over frosted glass
-    fun openMenu(target: MenuTarget) {
-        captureBlurredWindow(window) {
-            menuBackdrop = it
-            menu = target
-        }
+    // Capture and blur the screen first so menus and panels open over frosted glass
+    fun openMenu(app: TvApp, canMove: Boolean, from: Window = window) {
+        captureBlurredWindow(from) { menu = MenuTarget(app, canMove, it) }
+    }
+    fun openPanel(kind: Panel) {
+        captureBlurredWindow(window) { panel = OpenPanel(kind, it) }
     }
     var movingId by remember { mutableStateOf<String?>(null) }
     var swallowKeyUp by remember { mutableStateOf<Key?>(null) }
@@ -204,7 +195,6 @@ fun HomeScreen(
     val favouritesPerRow = ((favourites.size + FAVOURITE_ROWS - 1) / FAVOURITE_ROWS).coerceAtLeast(1)
     // Favourites are already one row up
     val recents = recentIds.filter { it !in favouriteIds }.mapNotNull { byPackage[it] }.take(RECENT_COUNT)
-    val others = apps.filter { it.packageName !in favouriteIds }
 
     fun updateFavourites(ids: List<String>) {
         favouriteIds = ids
@@ -254,7 +244,7 @@ fun HomeScreen(
         firstTile.requestFocusWhenAttached()
     }
 
-    val shownApp = focusedApp ?: favourites.firstOrNull() ?: others.firstOrNull()
+    val shownApp = focusedApp ?: favourites.firstOrNull() ?: apps.firstOrNull()
     val glow by animateColorAsState(shownApp?.glow ?: Background, tween(600), label = "glow")
 
     var games by remember { mutableStateOf(emptyList<Game>()) }
@@ -370,14 +360,13 @@ fun HomeScreen(
                     Spacer(Modifier.height(118.dp))
                     AppTitle(shownApp?.label.orEmpty(), moving = movingId != null)
                     val onFocused = { app: TvApp -> focusedApp = app }
-                    val onMenu = { app: TvApp -> openMenu(MenuTarget(app, canMove = false)) }
                     favourites.chunked(favouritesPerRow).forEachIndexed { row, rowApps ->
                         Shelf(
                             rowApps,
                             favouriteRows[row],
                             firstTile.takeIf { row == 0 },
                             onLaunch,
-                            { openMenu(MenuTarget(it, canMove = true)) },
+                            { openMenu(it, canMove = true) },
                             onFocused,
                             FavouriteTileWidth,
                             FavouriteTileHeight,
@@ -392,16 +381,10 @@ fun HomeScreen(
                         ShelfLabel("Sports")
                         SportsShelf(games, onOpenGame)
                     }
-                    if (inputs.isNotEmpty()) {
-                        ShelfLabel("Inputs")
-                        Shelf(inputs, rememberLazyListState(), null, onLaunch, {}, onFocused)
-                    }
                     if (recents.isNotEmpty()) {
                         ShelfLabel("Recent")
-                        Shelf(recents, rememberLazyListState(), null, onLaunch, onMenu, onFocused)
+                        Shelf(recents, rememberLazyListState(), null, onLaunch, { openMenu(it, canMove = false) }, onFocused)
                     }
-                    ShelfLabel("All apps")
-                    Shelf(others, rememberLazyListState(), firstTile.takeIf { favourites.isEmpty() }, onLaunch, onMenu, onFocused)
                     Spacer(Modifier.height(40.dp))
                 }
                 }
@@ -412,16 +395,45 @@ fun HomeScreen(
                     onHeight = { barHeight = it },
                     below = page,
                 ) {
-                    Header(now, onWifi, onSettings, onPicture, onSound)
+                    Header(
+                        now = now,
+                        onInputs = { openPanel(Panel.Inputs) }.takeIf { inputs.isNotEmpty() },
+                        onAllApps = { openPanel(Panel.AllApps) },
+                        allAppsFocus = firstTile.takeIf { favourites.isEmpty() },
+                        onSettings = onSettings,
+                        onPicture = onPicture,
+                        onSound = onSound,
+                    )
                 }
             }
         }
 
-        menu?.let { (app, canMove) ->
+        panel?.let { (kind, backdrop) ->
+            val launchAndClose = { app: TvApp ->
+                onLaunch(app)
+                panel = null
+            }
+            when (kind) {
+                Panel.AllApps -> AppGridPanel(
+                    "All apps", apps, FavouriteTileWidth, FavouriteTileHeight, FavouriteTileShape, backdrop,
+                    onLaunch = launchAndClose,
+                    onMenu = { app, from -> openMenu(app, canMove = false, from) },
+                    onDismiss = { panel = null },
+                )
+                Panel.Inputs -> AppGridPanel(
+                    "Inputs", inputs, TileWidth, TileHeight, TileShape, backdrop,
+                    onLaunch = launchAndClose,
+                    onMenu = { _, _ -> },
+                    onDismiss = { panel = null },
+                )
+            }
+        }
+
+        menu?.let { (app, canMove, backdrop) ->
             val isFavourite = app.packageName in favouriteIds
             AppMenu(
                 app = app,
-                backdrop = menuBackdrop,
+                backdrop = backdrop,
                 isFavourite = isFavourite,
                 canMove = canMove,
                 onDismiss = { menu = null },
@@ -451,7 +463,7 @@ private fun LazyListState.isFullyVisible(index: Int): Boolean {
 }
 
 // Retries for a few frames: freshly composed tiles aren't attached immediately
-private suspend fun FocusRequester.requestFocusWhenAttached() {
+internal suspend fun FocusRequester.requestFocusWhenAttached() {
     repeat(30) {
         withFrameNanos { }
         try {
@@ -513,38 +525,29 @@ private fun AppMenu(
 ) {
     val firstItem = remember { FocusRequester() }
     LaunchedEffect(Unit) { firstItem.requestFocusWhenAttached() }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            val bounds = with(LocalDensity.current) { Rect(0f, 0f, maxWidth.toPx(), maxHeight.toPx()) }
-            if (backdrop != null) {
-                Image(backdrop, contentDescription = null, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize())
+    GlassDialog(backdrop, onDismiss, contentAlignment = Alignment.Center) {
+        Column(
+            Modifier
+                .width(360.dp)
+                .glass(MenuShape)
+                .padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)) {
+                Image(app.image, contentDescription = null, modifier = Modifier.size(56.dp, 32.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
+                Spacer(Modifier.width(12.dp))
+                Text(app.label, color = TextPrimary, fontSize = 20.sp, fontFamily = UiDisplay, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
-            CompositionLocalProvider(LocalGlassSource provides backdrop?.let { GlassSource(it, bounds) }) {
-                Column(
-                    Modifier
-                        .width(360.dp)
-                        .glass(MenuShape)
-                        .padding(22.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)) {
-                        Image(app.image, contentDescription = null, modifier = Modifier.size(56.dp, 32.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
-                        Spacer(Modifier.width(12.dp))
-                        Text(app.label, color = TextPrimary, fontSize = 20.sp, fontFamily = UiDisplay, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    val itemModifier = Modifier.fillMaxWidth()
-                    if (canMove) Pill(null, "Move", onMove, itemModifier.focusRequester(firstItem), fillWidth = true)
-                    Pill(
-                        null,
-                        if (isFavourite) "Remove from favourites" else "Add to favourites",
-                        onToggleFavourite,
-                        if (canMove) itemModifier else itemModifier.focusRequester(firstItem),
-                        fillWidth = true,
-                    )
-                    Pill(null, "App info", onAppInfo, itemModifier, fillWidth = true)
-                }
-            }
+            val itemModifier = Modifier.fillMaxWidth()
+            if (canMove) Pill(null, "Move", onMove, itemModifier.focusRequester(firstItem), fillWidth = true)
+            Pill(
+                null,
+                if (isFavourite) "Remove from favourites" else "Add to favourites",
+                onToggleFavourite,
+                if (canMove) itemModifier else itemModifier.focusRequester(firstItem),
+                fillWidth = true,
+            )
+            Pill(null, "App info", onAppInfo, itemModifier, fillWidth = true)
         }
     }
 }
@@ -576,10 +579,13 @@ private fun rememberNow(): LocalDateTime {
     return now
 }
 
+// Null callbacks hide their pill
 @Composable
 private fun Header(
     now: LocalDateTime,
-    onWifi: () -> Unit,
+    onInputs: (() -> Unit)?,
+    onAllApps: () -> Unit,
+    allAppsFocus: FocusRequester?,
     onSettings: () -> Unit,
     onPicture: (() -> Unit)?,
     onSound: (() -> Unit)?,
@@ -613,16 +619,29 @@ private fun Header(
             }
         }
         Spacer(Modifier.width(20.dp))
-        Column {
+        // Gives way to the pills on TVs that show all six
+        Column(Modifier.weight(1f)) {
             Text(greeting(now.hour), color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
             val weatherText = weather?.let { "  ·  ${it.temperature}° ${it.summary}" }.orEmpty()
-            Text(now.format(DateTimeFormatter.ofPattern("EEEE d MMMM")) + weatherText, color = TextSecondary, fontSize = 15.sp)
+            Text(
+                now.format(DateTimeFormatter.ofPattern("EEEE d MMMM")) + weatherText,
+                color = TextSecondary,
+                fontSize = 15.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.width(20.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            onInputs?.let { Pill(R.drawable.ic_input, "Inputs", it) }
+            Pill(
+                R.drawable.ic_apps,
+                "All apps",
+                onAllApps,
+                if (allAppsFocus != null) Modifier.focusRequester(allAppsFocus) else Modifier,
+            )
             onPicture?.let { Pill(R.drawable.ic_picture, null, it) }
             onSound?.let { Pill(R.drawable.ic_sound, null, it) }
-            Pill(R.drawable.ic_wifi, rememberNetworkLabel(), onWifi)
             Pill(R.drawable.ic_settings, "Settings", onSettings)
         }
     }
@@ -676,7 +695,7 @@ private fun greeting(hour: Int): String = when (hour) {
 
 // Glass capsule; focused it turns solid white with dark content, like tvOS buttons
 @Composable
-private fun Pill(
+internal fun Pill(
     @DrawableRes icon: Int?,
     label: String?,
     onClick: () -> Unit,
@@ -756,7 +775,7 @@ private fun Shelf(
 }
 
 @Composable
-private fun AppTile(
+internal fun AppTile(
     app: TvApp,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -943,39 +962,5 @@ private fun GlassTileContent(app: TvApp, shape: RoundedCornerShape) {
         if (app.detail != null) {
             Text(app.detail, color = TextSecondary, fontSize = 13.sp, maxLines = 1)
         }
-    }
-}
-
-// SSID is only readable with location permission + location on; otherwise falls back to "Wi-Fi"
-@Composable
-private fun rememberNetworkLabel(): String {
-    val context = LocalContext.current
-    var label by remember { mutableStateOf(networkLabel(context)) }
-    DisposableEffect(Unit) {
-        val cm = context.getSystemService(ConnectivityManager::class.java)
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) { label = networkLabel(context) }
-            override fun onLost(network: Network) { label = networkLabel(context) }
-            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) { label = networkLabel(context) }
-        }
-        cm.registerDefaultNetworkCallback(callback)
-        onDispose { cm.unregisterNetworkCallback(callback) }
-    }
-    return label
-}
-
-@Suppress("DEPRECATION") // connectionInfo is the only SSID API on Android 9
-private fun networkLabel(context: Context): String {
-    val cm = context.getSystemService(ConnectivityManager::class.java)
-    // AdGuard runs as a VPN, so the active network is the VPN; look at every network instead
-    val transports = cm.allNetworks.mapNotNull { cm.getNetworkCapabilities(it) }
-    if (transports.none { it.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) }) return "Offline"
-    return when {
-        transports.any { it.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) } -> "Ethernet"
-        transports.any { it.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) } -> {
-            val ssid = context.applicationContext.getSystemService(WifiManager::class.java).connectionInfo.ssid
-            ssid?.trim('"')?.takeUnless { it.isBlank() || it == "<unknown ssid>" } ?: "Wi-Fi"
-        }
-        else -> "Online"
     }
 }

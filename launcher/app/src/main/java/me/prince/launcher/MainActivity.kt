@@ -57,7 +57,6 @@ class MainActivity : ComponentActivity() {
                 onAppInfo = { app ->
                     launch(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${app.packageName}")))
                 },
-                onWifi = { launch(Intent(Settings.ACTION_WIFI_SETTINGS)) },
                 onSettings = { launch(Intent(Settings.ACTION_SETTINGS)) },
                 onPicture = picture?.let { { launch(it) } },
                 onSound = sound?.let { { launch(it) } },

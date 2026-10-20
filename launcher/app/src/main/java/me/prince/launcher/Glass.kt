@@ -78,7 +78,7 @@ fun DrawScope.drawGlassSource(source: GlassSource, origin: Offset, alpha: Float 
     }
 }
 
-// Small blurred copy of the window, for the glass behind the long-press menu
+// Small blurred copy of the window, for the glass behind the long-press menu and the panels
 fun captureBlurredWindow(window: Window, onReady: (ImageBitmap?) -> Unit) {
     val view = window.decorView
     val target = Bitmap.createBitmap(BLUR_WIDTH, BLUR_WIDTH * view.height / view.width, Bitmap.Config.ARGB_8888)

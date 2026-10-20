@@ -7,9 +7,7 @@
 
     <!-- Weather (Open-Meteo) and sports scores (ESPN) -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <!-- Wi-Fi name (Android 9+ only reveals it with location permission) and weather location; granted via adb -->
+    <!-- Weather location; granted via adb -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- Closes a Live TV / Stremio background copy so it honours the input or title it's sent to -->
     <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
